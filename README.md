@@ -1,167 +1,238 @@
-# claude-backup
+# Claude Code History
 
-CLI để backup và xem lịch sử Claude Code offline. Tool tự dò dữ liệu Claude Code, gom hội thoại theo project, rồi build Markdown và HTML viewer tĩnh để mở lại bằng trình duyệt.
+`claude-history` is a Python CLI for exporting and browsing Claude Code
+conversation history offline.
 
-## Tính năng
+It reads Claude Code `.jsonl` history files, creates a clean local export, and
+generates a modern static viewer for searching and reviewing past sessions.
 
-- Backup lịch sử Claude Code thành thư mục local.
-- Xuất mỗi hội thoại ra `markdown/*.md` và `conversations/*.html`.
-- Tạo `index.html` để duyệt, tìm kiếm và mở hội thoại theo project.
-- Chạy offline bằng `file://`; có thêm lệnh `serve` khi dữ liệu rất lớn.
-- Rebuild sạch phần output do tool sở hữu, không xóa file riêng của người dùng trong thư mục output.
+## What It Produces
 
-## Cài đặt
+- `markdown/*.md`: one Markdown file per conversation.
+- `conversations/*.html`: one pre-rendered HTML page per conversation.
+- `index.html`: an offline viewer grouped by project.
+- `assets/style.css`: local CSS, no CDN required.
 
-### Ubuntu, WSL, macOS
+The viewer is built for large histories: conversation pages are pre-rendered,
+the index embeds only metadata, project groups render lazily, and sidebar
+sorting is newest-first.
 
-Khuyến nghị dùng `pipx`:
+## Features
+
+- Cross-platform support: Windows, WSL, Ubuntu, and macOS.
+- Automatic Claude Code source discovery.
+- Clean rebuild by default to avoid stale/orphaned output.
+- Optional incremental rebuilds for large histories.
+- Project grouping from the recorded `cwd` field, with folder-name fallback.
+- Modern 30/70 sidebar/content layout.
+- Distinct styling for user prompts, commands, and Claude responses.
+- Safe Markdown table rendering with overflow handling.
+- Local `serve` command for a more robust browser experience than `file://`.
+
+## Naming
+
+- Python distribution: `claude-code-history`
+- Python package: `claude_history`
+- CLI command: `claude-history`
+- Default output directory: `claude_history_export/`
+
+The source package intentionally does not share a name with the generated output
+directory, so `.gitignore` can ignore exports without hiding source files.
+
+## Installation
+
+### Recommended: pipx
 
 ```bash
 pipx install .
 ```
 
-Nếu shell chưa nhận lệnh `claude-backup`, kiểm tra PATH của `pipx`:
+If your shell cannot find the command afterwards:
 
 ```bash
 pipx ensurepath
 ```
 
+Then restart the terminal.
+
 ### Windows
 
-Dùng PowerShell hoặc CMD:
+From PowerShell or CMD:
 
 ```powershell
 python -m pip install .
 ```
 
-Hoặc:
-
-```powershell
-pip install .
-```
-
-Nếu không gọi được `claude-backup`, thêm thư mục `Scripts` của Python vào PATH. Thường gặp ở:
+If `claude-history` is not on `PATH`, add Python's `Scripts` directory. Common
+locations include:
 
 ```text
 %APPDATA%\Python\Python3x\Scripts
+<venv>\Scripts
 ```
 
-hoặc thư mục `Scripts` bên trong virtual environment đang dùng.
-
-## Cách chạy
-
-Chạy mặc định: tự dò source, ghi ra `./claude_backup`, rồi mở viewer.
+### Development Install
 
 ```bash
-claude-backup
+python -m pip install -e ".[dev]"
 ```
 
-Build nhưng không tự mở trình duyệt:
+## Quick Start
+
+Build the default export into `./claude_history_export` and open the viewer:
 
 ```bash
-claude-backup --no-open
+claude-history
 ```
 
-Chỉ định thư mục source và output:
+Build without opening a browser:
 
 ```bash
-claude-backup --source <projects> -o <out>
+claude-history --no-open
 ```
 
-Các tùy chọn thường dùng:
+Use an explicit Claude Code `projects` directory:
 
 ```bash
-claude-backup --by-activity
-claude-backup --no-tools
-claude-backup --full-results
-claude-backup --all-sources
-claude-backup --incremental
-claude-backup --no-subagents
+claude-history --source <path-to-.claude/projects> -o <output-dir>
 ```
 
-- `--by-activity`: sắp theo lần hoạt động cuối thay vì thời điểm bắt đầu.
-- `--no-tools`: ẩn chi tiết tool call trong nội dung export.
-- `--full-results`: giữ đầy đủ tool result, không rút gọn preview.
-- `--all-sources`: dùng tất cả source tự dò được thay vì chỉ source đầu tiên.
-- `--incremental`: chỉ render lại hội thoại có thay đổi để chạy nhanh hơn.
-- `--no-subagents`: bỏ qua session sub-agent nếu phiên bản hiện tại có hỗ trợ.
-
-Xem toàn bộ cờ:
+Merge all discovered sources:
 
 ```bash
-claude-backup -h
+claude-history --all-sources
 ```
 
-## Serve viewer
-
-Viewer mặc định mở trực tiếp `index.html` bằng `file://`, tiện nhất cho backup nhỏ và vừa.
-
-Khi dữ liệu rất lớn, chạy server local sẽ ổn định hơn:
+## CLI Options
 
 ```bash
-claude-backup serve
+claude-history [options]
 ```
 
-Tùy chọn:
+Common options:
+
+- `--source <path>`: Use a specific Claude Code `projects` directory. Can be passed more than once.
+- `--all-sources`: Use every discovered source instead of only the first one.
+- `-o, --output <path>`: Output directory. Defaults to `./claude_history_export`.
+- `--by-activity`: Sort by last activity instead of conversation start time.
+- `--no-tools`: Hide tool call details in the export.
+- `--full-results`: Keep full tool results instead of compact previews.
+- `--incremental`: Re-render only changed conversations when possible.
+- `--utc`: Render timestamps in UTC instead of local time.
+- `--no-subagents`: Exclude sidechain/sub-agent sessions from the index.
+- `--open`: Open the viewer after build. Enabled by default.
+- `--no-open`: Do not open the viewer after build.
+
+Show the full help:
 
 ```bash
-claude-backup serve -o <out>
-claude-backup serve --output <out>
-claude-backup serve --host 127.0.0.1 --port 8000
-claude-backup serve --no-open
+claude-history -h
+```
+
+## Serve Mode
+
+The default viewer works directly from `index.html` using `file://`.
+
+For very large exports, or if your browser behaves poorly with local files, use
+the local server:
+
+```bash
+claude-history serve
+```
+
+Options:
+
+```bash
+claude-history serve -o <output-dir>
+claude-history serve --host 127.0.0.1 --port 8000
+claude-history serve --no-open
 ```
 
 Trade-off:
 
-- `file://`: nhanh, đơn giản, không cần server.
-- `serve`: tốt hơn khi có rất nhiều conversation, tránh giới hạn của trình duyệt với file local và mở đường cho lazy-load ổn định hơn.
+- `file://` is the simplest option and works offline with no server.
+- `serve` is more stable for large exports and browser security edge cases.
 
-## Tự dò source
+## Source Discovery
 
-Nếu không truyền `--source`, tool tự tìm các thư mục `projects` của Claude Code theo thứ tự:
+When `--source` is not provided, `claude-history` looks for Claude Code project
+history directories in this order:
 
-1. `CLAUDE_CONFIG_DIR/projects` nếu có biến môi trường `CLAUDE_CONFIG_DIR`.
+1. `CLAUDE_CONFIG_DIR/projects`, if `CLAUDE_CONFIG_DIR` is set.
 2. `~/.claude/projects`.
-3. Khi chạy trong WSL: quét thêm `/mnt/c/Users/*/.claude/projects`.
-4. Khi chạy trên Windows: quét thêm WSL qua `\\wsl$` và `\\wsl.localhost`.
+3. On WSL: `/mnt/c/Users/*/.claude/projects`.
+4. On Windows: WSL home directories through `\\wsl$` and `\\wsl.localhost`.
 
-Nếu không tìm thấy source, truyền thủ công:
+If multiple sources are found, the first one is used by default and the CLI
+prints the discovered list. Use `--all-sources` to merge them, or `--source` to
+choose explicitly.
 
-```bash
-claude-backup --source <duong-dan-den-projects>
-```
+## Output Layout
 
-## Output
-
-Mặc định output nằm trong `./claude_backup`:
+Default output:
 
 ```text
-claude_backup/
+claude_history_export/
   conversations/
+    *.html
   markdown/
+    *.md
   assets/
+    style.css
   index.html
+  .claude-history-cache.json
 ```
 
-Mỗi lần full rebuild, tool chỉ xóa và tạo lại các phần nó sở hữu:
+On a full rebuild, the tool only owns and replaces:
 
 - `conversations/`
 - `markdown/`
 - `assets/`
 - `index.html`
+- `.claude-history-cache.json`
 
-Các file hoặc thư mục khác do người dùng đặt trong output sẽ được giữ nguyên.
+Other files you place in the output directory are preserved.
+
+Generated output should normally not be committed. The default
+`claude_history_export/` directory is ignored by `.gitignore`.
+
+## What Gets Exported
+
+`claude-history` exports Claude Code history from `.jsonl` files under Claude
+Code's `projects` directory.
+
+It does not export unrelated chat sessions from other tools or products. For
+example, a current Codex/OpenAI chat is not stored in Claude Code's
+`.claude/projects` directory, so it cannot appear in this export.
+
+If a Claude Code session is currently active and does not show up yet, close or
+finish that session and rebuild. The `.jsonl` file may not be fully flushed
+until the session ends.
 
 ## Development
 
-Cài editable kèm dependency dev:
+Install development dependencies:
 
 ```bash
-python -m pip install -e .[dev]
+python -m pip install -e ".[dev]"
 ```
 
-Chạy test:
+Run tests:
 
 ```bash
-pytest
+python -m pytest
 ```
+
+Build a wheel without dependencies:
+
+```bash
+python -m pip wheel --no-deps -w dist .
+```
+
+## Notes
+
+- All file I/O uses UTF-8 with replacement for malformed input.
+- Broken `.jsonl` lines are skipped instead of crashing the build.
+- Output filenames are slugged to avoid Windows-forbidden characters.
+- HTML assets are local and offline-friendly.
+

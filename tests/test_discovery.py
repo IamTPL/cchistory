@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from claude_backup.discovery import discover_sources
+from claude_history.discovery import discover_sources
 
 
 def test_discover_sources_uses_env_and_native_home_only_when_existing(tmp_path):

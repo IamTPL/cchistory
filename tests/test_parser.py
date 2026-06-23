@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from claude_backup.parser import decode_project, normalize_jsonl
+from claude_history.parser import decode_project, normalize_jsonl
 
 
 def write_jsonl(path: Path, records: list[dict]) -> None:

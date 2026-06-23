@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Claude Backup</title>
+  <link rel="stylesheet" href="assets/style.css">
+</head>
+<body class="index-page">
+  <div id="app">
+    <aside id="sidebar">
+      <header class="sidebar-header">
+        <div class="brand">
+          <div class="brand-mark">CB</div>
+          <div class="brand-copy">
+            <h1>Claude Backup</h1>
+            <p id="summary"></p>
+          </div>
+        </div>
+        <label class="search-shell">
+          <span>Search</span>
+          <input id="query" type="search" placeholder="Title or project" autocomplete="off">
+        </label>
+      </header>
+      <div id="list"></div>
+    </aside>
+    <main id="viewer">
+      <div class="viewer-empty">
+        <div class="viewer-empty-mark">⌁</div>
+        <p>Select a conversation</p>
+      </div>
+      <iframe name="view" title="Conversation viewer"></iframe>
+    </main>
+  </div>
+  <script>
+    const DATA = __DATA__;
+    const MAX_RESULTS = 300;
+    const list = document.getElementById("list");
+    const query = document.getElementById("query");
+    const summary = document.getElementById("summary");
+    const viewer = document.getElementById("viewer");
+
+    const projects = new Set(DATA.map((item) => item.p));
+    summary.textContent = `${DATA.length} conversations · ${projects.size} projects`;
+
+    function sortValue(item) {
+      if (typeof item.s === "number") return item.s;
+      const parsed = Date.parse(item.last || item.dt || "");
+      return Number.isNaN(parsed) ? 0 : parsed;
+    }
+
+    function sortedItems(items) {
+      return [...items].sort((a, b) => sortValue(b) - sortValue(a));
+    }
+
+    function makeRow(item) {
+      const a = document.createElement("a");
+      a.className = "row";
+      a.href = item.f;
+      a.target = "view";
+      a.addEventListener("click", () => {
+        viewer.classList.add("has-frame");
+      });
+
+      const title = document.createElement("div");
+      title.className = "row-title";
+      title.textContent = item.t;
+      a.appendChild(title);
+
+      const detail = document.createElement("div");
+      detail.className = "row-detail";
+      detail.textContent = `${item.dt} - ${item.n} messages`;
+      a.appendChild(detail);
+      return a;
+    }
+
+    function makeProjectButton(project, count) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "project";
+      button.setAttribute("aria-expanded", "false");
+
+      const chevron = document.createElement("span");
+      chevron.className = "project-chevron";
+      chevron.textContent = "▸";
+
+      const name = document.createElement("span");
+      name.className = "project-name";
+      name.textContent = project;
+
+      const badge = document.createElement("span");
+      badge.className = "project-count";
+      badge.textContent = count;
+
+      button.append(chevron, name, badge);
+      return { button, chevron };
+    }
+
+    function renderSearch(term) {
+      const needle = term.toLowerCase();
+      const hits = sortedItems(DATA)
+        .filter((item) => item.t.toLowerCase().includes(needle) || item.p.toLowerCase().includes(needle))
+        .slice(0, MAX_RESULTS);
+      list.replaceChildren();
+      if (!hits.length) {
+        const empty = document.createElement("div");
+        empty.className = "hint";
+        empty.textContent = "No results";
+        list.appendChild(empty);
+        return;
+      }
+      for (const item of hits) list.appendChild(makeRow(item));
+      if (hits.length === MAX_RESULTS) {
+        const capped = document.createElement("div");
+        capped.className = "hint small";
+        capped.textContent = `Showing first ${MAX_RESULTS} results`;
+        list.appendChild(capped);
+      }
+    }
+
+    function renderProjects() {
+      list.replaceChildren();
+      const grouped = new Map();
+      for (const item of sortedItems(DATA)) {
+        if (!grouped.has(item.p)) grouped.set(item.p, []);
+        grouped.get(item.p).push(item);
+      }
+
+      [...grouped.keys()].forEach((project) => {
+        const rows = document.createElement("div");
+        rows.className = "rows";
+        rows.hidden = true;
+
+        const { button, chevron } = makeProjectButton(project, grouped.get(project).length);
+        button.addEventListener("click", () => {
+          const open = rows.hidden;
+          rows.hidden = !open;
+          chevron.textContent = open ? "▾" : "▸";
+          button.setAttribute("aria-expanded", open ? "true" : "false");
+          if (open && !rows.dataset.rendered) {
+            for (const item of grouped.get(project)) rows.appendChild(makeRow(item));
+            rows.dataset.rendered = "1";
+          }
+        });
+
+        list.appendChild(button);
+        list.appendChild(rows);
+      });
+    }
+
+    query.addEventListener("input", () => {
+      const term = query.value.trim();
+      if (term) renderSearch(term);
+      else renderProjects();
+    });
+    renderProjects();
+  </script>
+</body>
+</html>

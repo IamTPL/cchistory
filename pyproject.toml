@@ -3,16 +3,16 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "claude-backup"
+name = "claude-code-history"
 version = "0.1.0"
-description = "Backup and browse Claude Code conversation history offline."
+description = "Export and browse Claude Code conversation history offline."
 readme = "README.md"
 requires-python = ">=3.9"
 dependencies = [
     "markdown>=3.6",
 ]
 authors = [
-    { name = "Claude Backup Contributors" },
+    { name = "Claude Code History Contributors" },
 ]
 classifiers = [
     "Programming Language :: Python :: 3",
@@ -27,7 +27,7 @@ dev = [
 ]
 
 [project.scripts]
-claude-backup = "claude_backup.cli:main"
+claude-history = "claude_history.cli:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
@@ -36,5 +36,4 @@ package-dir = {"" = "src"}
 where = ["src"]
 
 [tool.setuptools.package-data]
-claude_backup = ["templates/*.html", "assets/*.css"]
-
+claude_history = ["templates/*.html", "assets/*.css"]

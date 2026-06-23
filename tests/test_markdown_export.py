@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from claude_backup.markdown_export import md_to_html
+from claude_history.markdown_export import md_to_html
 
 
 def test_md_to_html_wraps_tables_for_viewer_overflow():
@@ -12,4 +12,3 @@ def test_md_to_html_wraps_tables_for_viewer_overflow():
 
     assert '<div class="table-wrap"><table>' in html
     assert "</table></div>" in html
-

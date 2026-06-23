@@ -4,7 +4,7 @@ import json
 import re
 from pathlib import Path
 
-from claude_backup.builder import build
+from claude_history.builder import build
 
 
 def write_jsonl(path: Path, message: str, cwd: str = "/work/project") -> None:
