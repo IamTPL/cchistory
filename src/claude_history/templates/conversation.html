@@ -16,19 +16,214 @@
 <body class="conversation-page">
   <a class="skip-link" href="#conversation">Skip to conversation</a>
   <main class="conversation-shell" id="conversation">
+    <span class="top-sentinel" data-top-sentinel aria-hidden="true"></span>
     <a class="back-link" href="../index.html" target="_top">Back to index</a>
     __BODY__
   </main>
+  <button class="back-to-top" type="button" data-back-to-top aria-label="Back to top" hidden>↑</button>
   <script>
-    document.querySelectorAll(".resume-copy").forEach(function (b) {
-      b.addEventListener("click", function () {
-        var text = b.getAttribute("data-cmd") || "";
+    const inFrame = window.self !== window.top;
+    const continueModal = document.querySelector("[data-continue-modal]");
+    const continueOpen = document.querySelector("[data-continue-open]");
+    const continueClose = document.querySelector("[data-continue-close]");
+    const backToTop = document.querySelector("[data-back-to-top]");
+    const topSentinel = document.querySelector("[data-top-sentinel]");
+    let restoreFocus = null;
+
+    function openContinueModal() {
+      if (!continueModal) return;
+      restoreFocus = document.activeElement;
+      continueModal.hidden = false;
+      document.documentElement.classList.add("has-open-modal");
+      if (continueClose) continueClose.focus();
+    }
+
+    function closeContinueModal() {
+      if (!continueModal) return;
+      continueModal.hidden = true;
+      document.documentElement.classList.remove("has-open-modal");
+      if (restoreFocus && typeof restoreFocus.focus === "function") restoreFocus.focus();
+    }
+
+    if (continueOpen) continueOpen.addEventListener("click", openContinueModal);
+    if (continueClose) continueClose.addEventListener("click", closeContinueModal);
+    if (continueModal) {
+      continueModal.addEventListener("click", function (event) {
+        if (event.target === continueModal) closeContinueModal();
+      });
+    }
+
+    if (!document.querySelector(".prompt-map")) {
+      document.documentElement.classList.add("no-prompt-map");
+    }
+
+    if (backToTop && topSentinel && "IntersectionObserver" in window) {
+      const topObserver = new IntersectionObserver(function (entries) {
+        backToTop.hidden = Boolean(entries[0] && entries[0].isIntersecting);
+      }, { threshold: 0 });
+      topObserver.observe(topSentinel);
+    }
+    if (backToTop) {
+      backToTop.addEventListener("click", function () {
+        window.scrollTo({ top: 0, behavior: "auto" });
+      });
+    }
+
+    function fallbackCopy(text) {
+      const textarea = document.createElement("textarea");
+      textarea.value = text;
+      textarea.setAttribute("readonly", "");
+      textarea.style.position = "fixed";
+      textarea.style.opacity = "0";
+      document.body.appendChild(textarea);
+      textarea.select();
+      let copied = false;
+      try {
+        copied = document.execCommand("copy");
+      } catch {
+        copied = false;
+      }
+      textarea.remove();
+      return copied;
+    }
+
+    document.querySelectorAll(".resume-copy").forEach(function (button) {
+      const label = button.textContent;
+      function markCopied() {
+        button.textContent = "Copied";
+        setTimeout(function () { button.textContent = label; }, 1500);
+      }
+      button.addEventListener("click", function () {
+        var text = button.getAttribute("data-cmd") || "";
         if (navigator.clipboard) {
           navigator.clipboard.writeText(text).then(function () {
-            b.textContent = "Copied";
-            setTimeout(function () { b.textContent = "Copy"; }, 1500);
-          }, function () {});
+            markCopied();
+          }, function () {
+            if (fallbackCopy(text)) markCopied();
+          });
+        } else if (fallbackCopy(text)) {
+          markCopied();
         }
+      });
+    });
+
+    async function downloadLinkedFile(link) {
+      const href = link.getAttribute("href");
+      if (!href || href === "#") return;
+      const name = link.getAttribute("download") || href.split("/").pop() || "";
+      if (window.location.protocol !== "file:") {
+        try {
+          const response = await fetch(href);
+          if (!response.ok) throw new Error("Download failed");
+          const blob = await response.blob();
+          const url = URL.createObjectURL(blob);
+          const anchor = document.createElement("a");
+          anchor.href = url;
+          anchor.download = name;
+          document.body.appendChild(anchor);
+          anchor.click();
+          anchor.remove();
+          URL.revokeObjectURL(url);
+          return;
+        } catch {
+          // Fall back to a normal same-origin anchor below.
+        }
+      }
+      const anchor = document.createElement("a");
+      anchor.href = href;
+      anchor.download = name;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+    }
+
+    document.querySelectorAll("[data-download][download]").forEach(function (link) {
+      if (window.location.protocol === "file:") {
+        link.title = "Browsers may open local file:// links instead of downloading. Use claude-history serve for reliable one-click downloads.";
+      }
+      link.addEventListener("click", function (event) {
+        if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+        event.preventDefault();
+        downloadLinkedFile(link);
+      });
+    });
+
+    const prompts = Array.from(document.querySelectorAll("[data-prompt-index]"));
+    const promptLinks = Array.from(document.querySelectorAll("[data-prompt-target]"));
+    const currentNumber = document.querySelector("[data-current-prompt]");
+    const currentTitle = document.querySelector("[data-current-prompt-title]");
+    const previousButton = document.querySelector("[data-prompt-prev]");
+    const nextButton = document.querySelector("[data-prompt-next]");
+    let currentPrompt = 0;
+
+    function setPrompt(index) {
+      if (!prompts.length) return;
+      currentPrompt = Math.max(0, Math.min(index, prompts.length - 1));
+      const prompt = prompts[currentPrompt];
+      if (currentNumber) currentNumber.textContent = String(currentPrompt + 1);
+      if (currentTitle) {
+        currentTitle.textContent = prompt.getAttribute("data-prompt-title") || "Human prompt";
+      }
+      promptLinks.forEach(function (link) {
+        const active = Number(link.getAttribute("data-prompt-target")) === currentPrompt + 1;
+        link.classList.toggle("is-active", active);
+        if (active) link.setAttribute("aria-current", "true");
+        else link.removeAttribute("aria-current");
+      });
+      if (previousButton) previousButton.disabled = currentPrompt === 0;
+      if (nextButton) nextButton.disabled = currentPrompt === prompts.length - 1;
+    }
+
+    function jumpToPrompt(index) {
+      if (!prompts.length) return;
+      setPrompt(index);
+      prompts[currentPrompt].scrollIntoView({ block: "start", behavior: "auto" });
+    }
+
+    if (previousButton) {
+      previousButton.addEventListener("click", function () {
+        jumpToPrompt(currentPrompt - 1);
+      });
+    }
+    if (nextButton) {
+      nextButton.addEventListener("click", function () {
+        jumpToPrompt(currentPrompt + 1);
+      });
+    }
+    promptLinks.forEach(function (link) {
+      link.addEventListener("click", function (event) {
+        event.preventDefault();
+        jumpToPrompt(Number(link.getAttribute("data-prompt-target")) - 1);
+      });
+    });
+
+    if ("IntersectionObserver" in window && prompts.length) {
+      const observer = new IntersectionObserver(function (entries) {
+        const visible = entries
+          .filter(function (entry) { return entry.isIntersecting; })
+          .sort(function (a, b) { return b.intersectionRatio - a.intersectionRatio; })[0];
+        if (visible) {
+          setPrompt(Number(visible.target.getAttribute("data-prompt-index")) - 1);
+        }
+      }, { rootMargin: "-18% 0px -62% 0px", threshold: [0.1, 0.35, 0.7] });
+      prompts.forEach(function (prompt) { observer.observe(prompt); });
+    }
+    setPrompt(0);
+
+    document.addEventListener("keydown", function (event) {
+      if (event.key === "Escape" && continueModal && !continueModal.hidden) {
+        closeContinueModal();
+      }
+    });
+
+    document.querySelectorAll(".subagent-link[data-child-file]").forEach(function (link) {
+      link.addEventListener("click", function (event) {
+        if (!inFrame) return;
+        event.preventDefault();
+        window.parent.postMessage({
+          type: "claude-history-open",
+          file: link.getAttribute("data-child-file")
+        }, "*");
       });
     });
   </script>

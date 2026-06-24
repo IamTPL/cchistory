@@ -19,10 +19,14 @@ def render_conversation_page(title: str, body_html: str) -> str:
     return template.replace("__TITLE__", html.escape(title)).replace("__BODY__", body_html)
 
 
-def render_index_page(meta: list[dict[str, Any]]) -> str:
+def render_index_page(meta: list[dict[str, Any]], manifest: dict[str, Any] | None = None) -> str:
     template = _read_text_resource("templates/index.html")
     data = json.dumps(meta, ensure_ascii=False).replace("</", "<\\/")
-    return template.replace("__DATA__", data)
+    rendered = template.replace("__DATA__", data)
+    if "__MANIFEST__" in rendered:
+        manifest_data = json.dumps(manifest or {}, ensure_ascii=False).replace("</", "<\\/")
+        rendered = rendered.replace("__MANIFEST__", manifest_data)
+    return rendered
 
 
 def copy_assets(output_assets: Path) -> None:

@@ -70,3 +70,23 @@ def test_turn_to_html_has_collapsible_thinking_tools_and_chips():
     no_think = _turn_to_html(turn, show_tools=True, full_results=False,
                              use_utc=False, show_thinking=False)
     assert "reasoning here" not in no_think
+
+
+def test_subagent_link_stays_inside_reader_shell():
+    from datetime import datetime, timezone
+    from claude_history.markdown_export import _turn_to_html
+    from claude_history.model import ToolCall, Turn
+
+    dt = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    turn = Turn(
+        kind="assistant", time=dt, text="spawned",
+        tool_calls=[ToolCall(name="Task", tool_use_id="task-1", child_stem="child-stem")],
+    )
+
+    html_out = _turn_to_html(turn, show_tools=True, full_results=False,
+                             use_utc=False, show_thinking=True)
+
+    assert '<details class="tool-call" open>' in html_out
+    assert 'href="child-stem.html"' in html_out
+    assert 'data-child-file="conversations/child-stem.html"' in html_out
+    assert 'target="_top"' not in html_out

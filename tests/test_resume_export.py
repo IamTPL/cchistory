@@ -12,14 +12,51 @@ def test_conv_to_html_has_stats_bar_and_resume_command():
         title="T", project="/work/proj", cwd="/work/proj", session_id="1c30f636",
         created=dt, last=dt,
         turns=[Turn(kind="human", time=dt, text="hello")],
-        totals=Totals(messages=1, input_tokens=10, output_tokens=20, tool_calls=2),
+        totals=Totals(
+            messages=182,
+            input_tokens=14948,
+            output_tokens=178334,
+            cache_tokens=20914688,
+            tool_calls=98,
+        ),
     )
     out = conv_to_html(conv, show_tools=True, full_results=False, stem="2024-01-01_t_abc")
     assert "stats-bar" in out
+    assert "<strong>14,948</strong>tokens in" in out
+    assert "<strong>178,334</strong>out" in out
+    assert "<strong>20,914,688</strong>cache" in out
+    assert "<strong>182</strong>turns" in out
+    assert "data-continue-open" in out
+    assert "continue-dialog" in out
     assert "cd /work/proj &amp;&amp; claude --resume 1c30f636" in out
     assert "--fork-session" in out
+    assert "resume-panel" not in out
     assert 'href="../markdown/2024-01-01_t_abc.md"' in out
+    assert 'download="2024-01-01_t_abc.md"' in out
     assert 'href="2024-01-01_t_abc.json"' in out
+    assert 'download="2024-01-01_t_abc.json"' in out
+
+
+def test_conv_to_html_has_prompt_navigation():
+    dt = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    conv = Conversation(
+        title="T", project="/work/proj", cwd="/work/proj", session_id="sid",
+        created=dt, last=dt,
+        turns=[
+            Turn(kind="human", time=dt, text="first prompt"),
+            Turn(kind="assistant", time=dt, text="long answer"),
+            Turn(kind="human", time=dt, text="second prompt"),
+        ],
+        totals=Totals(messages=3),
+    )
+
+    out = conv_to_html(conv, show_tools=True, full_results=False, stem="stem")
+
+    assert "data-prompt-next" in out
+    assert "prompt-control" not in out
+    assert "prompt-map" in out
+    assert 'id="prompt-1"' in out
+    assert 'id="prompt-2"' in out
 
 
 def test_export_conversation_finds_and_writes_json(tmp_path):

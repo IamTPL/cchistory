@@ -125,6 +125,67 @@ def test_build_index_metadata_is_newest_first(tmp_path):
     assert data[0]["s"] > data[1]["s"]
 
 
+def test_build_writes_lightweight_manifest(tmp_path):
+    source = tmp_path / "source"
+    output = tmp_path / "out"
+    write_jsonl_at(source / "-work-project" / "one.jsonl", "hello", "2024-01-01T00:00:00Z")
+
+    index = build([source], output, incremental=False)
+    manifest = json.loads((output / "manifest.json").read_text(encoding="utf-8"))
+
+    assert "const MANIFEST =" not in index.read_text(encoding="utf-8")
+    assert manifest["summary"]["conversation_count"] == 1
+    assert manifest["summary"]["prompt_count"] == 1
+    assert manifest["projects"][0]["name"] == "/work/project"
+
+
+def test_build_index_metadata_contains_capped_deep_search_text(tmp_path):
+    import json as _json
+    source = tmp_path / "source" / "-work-project"
+    source.mkdir(parents=True)
+    output = tmp_path / "out"
+    records = [
+        {"timestamp": "2024-01-01T00:00:00Z", "cwd": "/work/project",
+         "message": {"role": "user", "content": "find alpha prompt"}},
+        {"timestamp": "2024-01-01T00:00:01Z",
+         "message": {"role": "assistant", "content": "deep beta assistant answer"}},
+    ]
+    (source / "one.jsonl").write_text(
+        "\n".join(_json.dumps(record) for record in records), encoding="utf-8")
+
+    index = build([source], output, incremental=False)
+    data = read_index_data(index)
+
+    assert "find alpha prompt" in data[0]["q"]
+    assert "deep beta assistant answer" in data[0]["q"]
+    assert len(data[0]["q"]) <= 16_000
+
+
+def test_index_metadata_includes_capped_deep_search_text(tmp_path):
+    source = tmp_path / "source" / "-work-project"
+    source.mkdir(parents=True)
+    output = tmp_path / "out"
+    records = [
+        {"timestamp": "2024-01-01T00:00:00Z", "cwd": "/work/project",
+         "message": {"role": "user", "content": "ordinary title prompt"}},
+    ]
+    for index in range(24):
+        records.append({"timestamp": f"2024-01-01T00:00:{index + 1:02d}Z", "message": {
+            "role": "assistant", "content": f"filler assistant response {index}"}})
+    records.append({"timestamp": "2024-01-01T00:00:59Z", "message": {
+        "role": "assistant", "content": "deep assistant phrase lemon-sky-indexable"}})
+    (source / "s.jsonl").write_text(
+        "\n".join(json.dumps(record, ensure_ascii=False) for record in records) + "\n",
+        encoding="utf-8",
+    )
+
+    index = build([source], output, incremental=False)
+
+    data = read_index_data(index)
+    assert "lemon-sky-indexable" in data[0]["q"]
+    assert len(data[0]["q"]) <= 16_000
+
+
 def test_incremental_reuse_invalidated_when_options_change(tmp_path):
     import json as _json
     source = tmp_path / "source" / "-work-project"

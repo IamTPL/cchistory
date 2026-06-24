@@ -14,6 +14,10 @@ from .parser import to_local, truncate
 LABEL = {"human": "You", "assistant": "Claude", "command": "Command"}
 
 
+def _format_int(value: int) -> str:
+    return f"{int(value or 0):,}"
+
+
 def conv_to_markdown(
     conv,
     show_tools: bool,
@@ -30,8 +34,9 @@ def conv_to_markdown(
     out.append(f"*Session: {conv.session_id}*")
     tot = conv.totals
     out.append(
-        f"*Tokens: in {tot.input_tokens} / out {tot.output_tokens} / cache "
-        f"{tot.cache_tokens} · {tot.tool_calls} tools · {tot.thinking_blocks} thinking*"
+        f"*Tokens: in {_format_int(tot.input_tokens)} / out {_format_int(tot.output_tokens)} / cache "
+        f"{_format_int(tot.cache_tokens)} · {_format_int(tot.tool_calls)} tools · "
+        f"{_format_int(tot.thinking_blocks)} thinking*"
     )
 
     rendered: list[str] = []
@@ -61,7 +66,7 @@ def conv_to_markdown(
             if turn.model:
                 bits.append(turn.model)
             if turn.usage:
-                bits.append(f"↑{turn.usage.input_tokens} ↓{turn.usage.output_tokens}")
+                bits.append(f"↑{_format_int(turn.usage.input_tokens)} ↓{_format_int(turn.usage.output_tokens)}")
             meta = " · " + " · ".join(bits)
         header = f"### {LABEL.get(turn.kind, turn.kind)}" + (f"  -  `{ts}`" if ts else "") + meta
         rendered.append(header + "\n\n" + "\n\n".join(block))
@@ -103,11 +108,11 @@ def _turn_chips(turn) -> str:
         chips.append(f'<span class="chip chip-model">{html.escape(turn.model)}</span>')
     if turn.usage:
         u = turn.usage
-        chips.append(f'<span class="chip">↑ {u.input_tokens}</span>')
-        chips.append(f'<span class="chip">↓ {u.output_tokens}</span>')
+        chips.append(f'<span class="chip">↑ {_format_int(u.input_tokens)}</span>')
+        chips.append(f'<span class="chip">↓ {_format_int(u.output_tokens)}</span>')
         cache = u.cache_creation_input_tokens + u.cache_read_input_tokens
         if cache:
-            chips.append(f'<span class="chip">cache {cache}</span>')
+            chips.append(f'<span class="chip">cache {_format_int(cache)}</span>')
     return "".join(chips)
 
 
@@ -122,7 +127,8 @@ def _thinking_to_html(thinking: list[str]) -> str:
 def _tool_calls_to_html(tool_calls, full_results: bool) -> str:
     parts = ['<div class="tool-list">']
     for tc in tool_calls:
-        parts.append('<details class="tool-call"><summary>')
+        open_attr = " open" if tc.child_stem else ""
+        parts.append(f'<details class="tool-call"{open_attr}><summary>')
         parts.append(f'<span class="tool-name">{html.escape(tc.name or "tool")}</span>')
         if tc.arg_summary:
             parts.append(f'<span class="tool-arg">{html.escape(tc.arg_summary)}</span>')
@@ -137,15 +143,19 @@ def _tool_calls_to_html(tool_calls, full_results: bool) -> str:
             parts.append('<pre class="tool-result"><code>'
                          + html.escape(_soft_cap(tc.result_text, full_results)) + "</code></pre>")
         if tc.child_stem:
-            parts.append(f'<a class="subagent-link" href="{html.escape(tc.child_stem)}.html" '
-                         'target="_top">↳ Mở sub-agent</a>')
+            child = html.escape(tc.child_stem)
+            parts.append(
+                f'<a class="subagent-link" href="{child}.html" '
+                f'data-child-file="conversations/{child}.html">Open sub-agent</a>'
+            )
         parts.append("</details>")
     parts.append("</div>")
     return "\n".join(parts)
 
 
 def _turn_to_html(turn, show_tools: bool, full_results: bool,
-                  use_utc: bool, show_thinking: bool) -> str:
+                  use_utc: bool, show_thinking: bool,
+                  turn_index: int = 0, prompt_index: int | None = None) -> str:
     label = LABEL.get(turn.kind, turn.kind.title())
     timestamp = (to_local(turn.time, use_utc).strftime("%Y-%m-%d %H:%M")
                  if turn.time.year > 1 else "")
@@ -162,8 +172,20 @@ def _turn_to_html(turn, show_tools: bool, full_results: bool,
     if not body:
         return ""
     chips = _turn_chips(turn) if turn.kind == "assistant" else ""
+    classes = f"message message-{reclass(turn.kind)}"
+    section_id = f"prompt-{prompt_index}" if prompt_index is not None else f"turn-{turn_index}"
+    attrs = [
+        f'id="{section_id}"',
+        f'data-turn-index="{turn_index}"',
+        f'data-kind="{html.escape(turn.kind)}"',
+    ]
+    if prompt_index is not None:
+        classes += " prompt-anchor"
+        attrs.append(f'data-prompt-index="{prompt_index}"')
+        attrs.append(f'data-prompt-title="{html.escape(_prompt_title(turn.text), quote=True)}"')
+    attr_text = " ".join(attrs)
     return "\n".join([
-        f'<section class="message message-{reclass(turn.kind)}">',
+        f'<section class="{classes}" {attr_text}>',
         '<div class="message-head">',
         f'<span class="message-role">{html.escape(label)}</span>',
         f'<span class="message-chips">{chips}</span>' if chips else "",
@@ -172,6 +194,48 @@ def _turn_to_html(turn, show_tools: bool, full_results: bool,
         "\n".join(body),
         "</section>",
     ])
+
+
+def _prompt_title(text: str) -> str:
+    title = " ".join(str(text or "").split())
+    if len(title) <= 88:
+        return title
+    return title[:88].rstrip() + "..."
+
+
+def _prompt_map(prompts: list[tuple[int, Any]], use_utc: bool) -> str:
+    if not prompts:
+        return ""
+    items: list[str] = []
+    for index, (_turn_index, turn) in enumerate(prompts, start=1):
+        timestamp = (to_local(turn.time, use_utc).strftime("%H:%M")
+                     if turn.time.year > 1 else "")
+        title = html.escape(_prompt_title(turn.text))
+        time = f"<span>{html.escape(timestamp)}</span>" if timestamp else ""
+        items.append(
+            f'<a class="prompt-item" href="#prompt-{index}" data-prompt-target="{index}">'
+            f'<span class="prompt-id">P{index:02d}</span>'
+            f'<span class="prompt-text"><strong>{title}</strong>{time}</span>'
+            "</a>"
+        )
+    return (
+        '<aside class="prompt-map" aria-label="Prompt map">'
+        '<div class="prompt-map-header">'
+        '<div class="prompt-map-heading">'
+        '<strong>Prompt map</strong>'
+        f'<span><span data-current-prompt>1</span> of {len(prompts)}</span>'
+        '</div>'
+        '<div class="prompt-map-actions">'
+        '<button class="map-button" type="button" data-prompt-prev title="Previous prompt">Prev</button>'
+        '<button class="map-button is-primary" type="button" data-prompt-next title="Next prompt">Next</button>'
+        '</div>'
+        '</div>'
+        '<div class="prompt-map-current" data-current-prompt-title>Human turns only</div>'
+        '<div class="prompt-list">'
+        + "\n".join(items)
+        + "</div>"
+        "</aside>"
+    )
 
 
 def conv_to_html(
@@ -187,11 +251,23 @@ def conv_to_html(
         created = to_local(conv.created, use_utc).strftime("%Y-%m-%d %H:%M")
     tz = "UTC" if use_utc else "local time"
 
+    prompts = [
+        (index, turn)
+        for index, turn in enumerate(conv.turns, start=1)
+        if turn.kind == "human" and turn.text
+    ]
+
+    article_class = "conversation has-prompt-map" if prompts else "conversation"
     parts = [
-        '<article class="conversation">',
+        f'<article class="{article_class}">',
         '<header class="conversation-header">',
-        '<div class="conversation-eyebrow">Conversation</div>',
+        '<div class="conversation-eyebrow">Conversation stack</div>',
+        '<div class="conversation-title-row">',
         f"<h1>{html.escape(str(conv.title))}</h1>",
+        '<button class="button continue-open" type="button" '
+        'data-continue-open aria-haspopup="dialog" aria-label="Open continue options">'
+        'Continue</button>',
+        '</div>',
         '<div class="conversation-meta">',
         f"<span>{html.escape(str(conv.project))}</span>",
     ]
@@ -201,14 +277,19 @@ def conv_to_html(
     parts.append("</div>")
     parts.append(_stats_bar(conv))
     parts.append(_resume_panel(conv, stem))
-    parts.extend(["</header>", '<div class="message-list">'])
+    parts.extend(["</header>", '<div class="conversation-body">', '<div class="message-list">'])
 
-    for turn in conv.turns:
-        rendered = _turn_to_html(turn, show_tools, full_results, use_utc, show_thinking)
+    prompt_lookup = {turn_index: prompt_number for prompt_number, (turn_index, _turn) in enumerate(prompts, start=1)}
+    for turn_index, turn in enumerate(conv.turns, start=1):
+        rendered = _turn_to_html(
+            turn, show_tools, full_results, use_utc, show_thinking,
+            turn_index=turn_index,
+            prompt_index=prompt_lookup.get(turn_index),
+        )
         if rendered:
             parts.append(rendered)
 
-    parts.extend(["</div>", "</article>"])
+    parts.extend(["</div>", _prompt_map(prompts, use_utc), "</div>", "</article>"])
     return "\n".join(parts)
 
 
@@ -220,7 +301,7 @@ def _stats_bar(conv) -> str:
         ("thinking", tot.thinking_blocks), ("sub-agents", tot.subagents),
     ]
     cells = "".join(
-        f'<span class="stat"><strong>{value}</strong>{html.escape(name)}</span>'
+        f'<span class="stat"><strong>{_format_int(value)}</strong>{html.escape(name)}</span>'
         for name, value in items
     )
     extra: list[str] = []
@@ -241,17 +322,35 @@ def _resume_panel(conv, stem: str) -> str:
         cmd = f"claude --resume {conv.session_id}"
     downloads = ""
     if stem:
+        safe_stem = html.escape(stem, quote=True)
         downloads = (
-            f'<a class="dl" download href="../markdown/{html.escape(stem)}.md">Download .md</a>'
-            f'<a class="dl" download href="{html.escape(stem)}.json">Download .json</a>'
+            f'<a class="dl" download="{safe_stem}.md" '
+            f'href="../markdown/{safe_stem}.md" data-download>Download Markdown</a>'
+            f'<a class="dl" download="{safe_stem}.json" '
+            f'href="{safe_stem}.json" data-download>Download JSON</a>'
         )
     return (
-        '<div class="resume-panel">'
-        '<div class="resume-title">↻ Continue</div>'
+        '<div class="modal-backdrop" data-continue-modal hidden>'
+        '<section class="continue-dialog" role="dialog" aria-modal="true" '
+        'aria-labelledby="continue-title">'
+        '<div class="continue-dialog-head">'
+        '<div class="continue-dialog-title">'
+        '<strong id="continue-title">Continue conversation</strong>'
+        '<span>Use this command when the project path exists on this machine.</span>'
+        '</div>'
+        '<button class="button" type="button" data-continue-close>Close</button>'
+        '</div>'
+        '<div class="continue-guide">'
+        '<p>Run the command in a terminal to reopen this Claude Code session. '
+        'Add <code>--fork-session</code> when you want to branch from the saved session.</p>'
         f'<pre class="resume-cmd"><code>{html.escape(cmd)}</code></pre>'
-        f'<button class="resume-copy" type="button" data-cmd="{html.escape(cmd, quote=True)}">Copy</button>'
-        '<div class="resume-hint">thêm <code>--fork-session</code> để rẽ nhánh (giữ bản gốc)</div>'
-        f'<div class="resume-downloads">{downloads}</div>'
+        '</div>'
+        '<div class="resume-actions">'
+        f'<button class="resume-copy" type="button" data-cmd="{html.escape(cmd, quote=True)}">'
+        'Copy command</button>'
+        f'{downloads}'
+        '</div>'
+        '</section>'
         "</div>"
     )
 

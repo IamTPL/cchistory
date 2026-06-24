@@ -3,104 +3,95 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Claude History</title>
+  <title>CcHistory</title>
   <link rel="stylesheet" href="assets/style.css">
 </head>
 <body class="index-page">
-  <div id="app">
-    <aside id="sidebar" aria-label="Conversation navigation">
-      <header class="sidebar-header">
-        <div class="brand">
-          <div class="brand-mark" aria-hidden="true">CH</div>
-          <div class="brand-copy">
-            <h1>Claude History</h1>
-            <p id="summary">Preparing export</p>
-          </div>
+  <div id="app" class="app-shell">
+    <aside class="side-panel" aria-label="Conversation navigation">
+      <header class="side-header">
+        <div class="side-title">
+          <h1>CcHistory</h1>
         </div>
-
-        <div class="stat-grid" aria-label="Export summary">
-          <div class="stat">
-            <strong id="conversation-count">0</strong>
-            <span>Conversations</span>
-          </div>
-          <div class="stat">
-            <strong id="project-count">0</strong>
-            <span>Projects</span>
-          </div>
-          <div class="stat">
-            <strong id="message-count">0</strong>
-            <span>Messages</span>
-          </div>
-        </div>
-
-        <label class="search-shell">
+        <label class="search-box">
           <span>Search</span>
-          <input id="query" type="search" placeholder="Title or project" autocomplete="off">
+          <input id="query" type="search" placeholder="Prompt, Claude reply, path, tool call, project" autocomplete="off">
+          <kbd>Ctrl K</kbd>
         </label>
-
-        <div class="browse-controls">
-          <div class="mode-tabs" role="tablist" aria-label="Browse mode">
-            <button type="button" class="mode-tab" data-mode="projects" role="tab" aria-selected="true">Projects</button>
-            <button type="button" class="mode-tab" data-mode="recent" role="tab" aria-selected="false">Recent</button>
-          </div>
-          <label class="subagent-toggle" id="subagent-toggle">
-            <input id="include-subagents" type="checkbox" checked>
-            <span>Subagents</span>
-          </label>
-        </div>
       </header>
 
-      <div id="list" aria-live="polite"></div>
+      <section class="metric-grid" aria-label="Export summary">
+        <div class="metric"><strong id="conversation-count">0</strong><span>Conversations</span></div>
+        <div class="metric"><strong id="project-count">0</strong><span>Projects</span></div>
+        <div class="metric"><strong id="subagent-count">0</strong><span>Sub-agent runs</span></div>
+        <div class="metric"><strong id="token-count">0</strong><span>Tokens indexed</span></div>
+      </section>
+
+      <section class="list-panel">
+        <div class="tabs" role="tablist" aria-label="Browse mode">
+          <button class="tab" type="button" data-mode="projects" role="tab">Projects</button>
+          <button class="tab" type="button" data-mode="recent" role="tab">Recent</button>
+        </div>
+        <p class="tab-help" id="tab-help"></p>
+        <div id="list" class="list-body" aria-live="polite"></div>
+      </section>
     </aside>
 
-    <main id="viewer">
-      <div class="viewer-status" id="viewer-status">
-        <div class="viewer-status-mark" aria-hidden="true">CH</div>
-        <p class="viewer-status-title" id="viewer-status-title">Select a conversation</p>
-        <p class="viewer-status-copy" id="viewer-status-copy">Search, browse by project, or open the newest session.</p>
+    <main class="viewer" id="viewer">
+      <div class="viewer-bar">
+        <div class="viewer-title">
+          <strong id="viewer-title">Conversation</strong>
+          <span id="viewer-meta">Select a conversation</span>
+        </div>
+        <div class="toolbar">
+          <a class="button" id="viewer-md" href="#" download data-download>Download MD</a>
+          <a class="button" id="viewer-json" href="#" download data-download>Download JSON</a>
+        </div>
       </div>
       <iframe id="frame" name="view" title="Conversation viewer"></iframe>
+      <div class="viewer-status" id="viewer-status">
+        <div class="viewer-status-mark" aria-hidden="true">CH</div>
+        <p class="viewer-status-title" id="viewer-status-title">Loading conversation</p>
+        <p class="viewer-status-copy" id="viewer-status-copy">Preparing the reader.</p>
+      </div>
     </main>
   </div>
 
   <script>
     const DATA = __DATA__;
-    const MAX_RESULTS = 300;
+    const MAX_ROWS = 400;
     const STORE_MODE = "claude-history-mode";
-    const STORE_SUBAGENTS = "claude-history-subagents";
+    const STORE_PROJECTS = "claude-history-collapsed-projects";
 
     const list = document.getElementById("list");
     const query = document.getElementById("query");
-    const summary = document.getElementById("summary");
-    const viewer = document.getElementById("viewer");
+    const tabHelp = document.getElementById("tab-help");
     const frame = document.getElementById("frame");
-    const statusTitle = document.getElementById("viewer-status-title");
-    const statusCopy = document.getElementById("viewer-status-copy");
-    const conversationCount = document.getElementById("conversation-count");
-    const projectCount = document.getElementById("project-count");
-    const messageCount = document.getElementById("message-count");
-    const includeSubagents = document.getElementById("include-subagents");
-    const subagentToggle = document.getElementById("subagent-toggle");
+    const viewer = document.getElementById("viewer");
+    const viewerTitle = document.getElementById("viewer-title");
+    const viewerMeta = document.getElementById("viewer-meta");
+    const viewerStatusTitle = document.getElementById("viewer-status-title");
+    const viewerStatusCopy = document.getElementById("viewer-status-copy");
+    const viewerMd = document.getElementById("viewer-md");
+    const viewerJson = document.getElementById("viewer-json");
     const modeButtons = Array.from(document.querySelectorAll("[data-mode]"));
 
     const numberFormat = new Intl.NumberFormat();
-    const dateFormat = new Intl.DateTimeFormat(undefined, {
-      year: "numeric",
-      month: "short",
-      day: "2-digit",
-    });
-    const timeFormat = new Intl.DateTimeFormat(undefined, {
-      hour: "2-digit",
-      minute: "2-digit",
-      hour12: false,
-    });
+    const compactFormat = new Intl.NumberFormat(undefined, { notation: "compact", maximumFractionDigits: 1 });
+    const dateFormat = new Intl.DateTimeFormat(undefined, { month: "2-digit", day: "2-digit", year: "2-digit" });
+    const timeFormat = new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit", hour12: false });
 
-    let mode = readStore(STORE_MODE, "projects");
+    const ITEMS = DATA
+      .map((item) => ({ ...item, _sort: sortValue(item), _search: searchText(item) }))
+      .sort((a, b) => b._sort - a._sort);
+    const BY_FILE = new Map(ITEMS.map((item) => [item.f, item]));
+    const PROJECTS = new Set(ITEMS.map((item) => item.p));
+
+    let mode = readStore(STORE_MODE, "recent");
+    if (!["projects", "recent"].includes(mode)) mode = "recent";
     let activeFile = "";
-    const openProjects = new Set();
-
-    if (!["projects", "recent"].includes(mode)) mode = "projects";
-    includeSubagents.checked = readStore(STORE_SUBAGENTS, "1") !== "0";
+    let collapsedProjects = readSet(STORE_PROJECTS);
+    let renderTimer = 0;
 
     function readStore(key, fallback) {
       try {
@@ -118,66 +109,114 @@
       }
     }
 
+    function readSet(key) {
+      try {
+        return new Set(JSON.parse(localStorage.getItem(key) || "[]"));
+      } catch {
+        return new Set();
+      }
+    }
+
+    function writeSet(key, value) {
+      try {
+        localStorage.setItem(key, JSON.stringify(Array.from(value)));
+      } catch {
+        return undefined;
+      }
+    }
+
     function sortValue(item) {
       if (typeof item.s === "number") return item.s;
-      const parsed = Date.parse(item.last || item.dt || "");
+      const parsed = Date.parse(item.last || item.created || item.dt || "");
       return Number.isNaN(parsed) ? 0 : parsed;
     }
 
-    function sortedItems(items) {
-      return [...items].sort((a, b) => sortValue(b) - sortValue(a));
+    function searchText(item) {
+      return [
+        item.q,
+        item.t,
+        item.p,
+        item.preview,
+        item.cwd,
+        item.branch,
+        item.session,
+        ...(item.models || []),
+        ...Object.keys(item.tool_counts || {}),
+      ].filter(Boolean).join(" ").toLowerCase();
     }
 
-    const SORTED = sortedItems(DATA);
-    const subagentCount = SORTED.filter((item) => item.sa).length;
-    if (!subagentCount) subagentToggle.hidden = true;
-
-    function visibleItems() {
-      return includeSubagents.checked ? SORTED : SORTED.filter((item) => !item.sa);
+    function formatDateTime(value) {
+      const parsed = new Date(value || "");
+      if (!value || Number.isNaN(parsed.valueOf())) return "";
+      return `${dateFormat.format(parsed)} ${timeFormat.format(parsed)}`;
     }
 
-    function projectSet(items) {
-      return new Set(items.map((item) => item.p));
+    function itemDetail(item) {
+      const when = formatDateTime(item.last || item.dt);
+      const type = item.sa ? "sub-agent" : "conversation";
+      return `${when} / ${numberFormat.format(item.n || 0)} turns / ${type}`;
     }
 
-    function totalMessages(items) {
-      return items.reduce((sum, item) => sum + (Number(item.n) || 0), 0);
+    function fileName(path) {
+      return (path || "").split("/").pop() || "";
     }
 
-    function updateStats(items) {
-      const projects = projectSet(items);
-      conversationCount.textContent = numberFormat.format(items.length);
-      projectCount.textContent = numberFormat.format(projects.size);
-      messageCount.textContent = numberFormat.format(totalMessages(items));
-      summary.textContent = `${numberFormat.format(items.length)} conversations across ${numberFormat.format(projects.size)} projects`;
+    function setDownloadLink(link, href) {
+      link.href = href || "#";
+      if (href) {
+        link.download = fileName(href);
+        link.dataset.downloadName = fileName(href);
+        link.removeAttribute("aria-disabled");
+      } else {
+        link.removeAttribute("download");
+        delete link.dataset.downloadName;
+        link.setAttribute("aria-disabled", "true");
+      }
     }
 
-    function dateLabel(item) {
-      const parsed = new Date(item.last || item.dt || "");
-      if (!Number.isNaN(parsed.valueOf())) return dateFormat.format(parsed);
-      return item.dt || "Unknown date";
+    function updateSummary() {
+      const subagents = ITEMS.filter((item) => item.sa).length;
+      const tokens = ITEMS.reduce((sum, item) => sum + (Number(item.tokens) || 0), 0);
+      document.getElementById("conversation-count").textContent = compactFormat.format(ITEMS.length);
+      document.getElementById("project-count").textContent = compactFormat.format(PROJECTS.size);
+      document.getElementById("subagent-count").textContent = compactFormat.format(subagents);
+      document.getElementById("token-count").textContent = compactFormat.format(tokens);
     }
 
-    function timeLabel(item) {
-      if (!item.last) return "";
-      const parsed = new Date(item.last);
-      return Number.isNaN(parsed.valueOf()) ? "" : timeFormat.format(parsed);
+    function matches(item, term) {
+      if (!term) return true;
+      const terms = term.toLowerCase().split(/\s+/).filter(Boolean);
+      return terms.every((needle) => item._search.includes(needle));
     }
 
-    function detailLabel(item) {
-      const suffix = item.sa ? " - subagent" : "";
-      const time = timeLabel(item);
-      const when = time ? `${dateLabel(item)} ${time}` : dateLabel(item);
-      return `${when} - ${numberFormat.format(item.n)} messages${suffix}`;
+    function baseItems() {
+      if (mode === "recent") return ITEMS.filter((item) => !item.sa);
+      return ITEMS;
     }
 
-    function matchesTerm(item, term) {
-      const needle = term.toLowerCase();
-      return item.t.toLowerCase().includes(needle) || item.p.toLowerCase().includes(needle);
+    function currentItems() {
+      const term = query.value.trim();
+      const items = baseItems();
+      return term ? items.filter((item) => matches(item, term)) : items;
+    }
+
+    function setMode(nextMode, shouldRender = true) {
+      mode = nextMode;
+      writeStore(STORE_MODE, mode);
+      for (const button of modeButtons) {
+        const active = button.dataset.mode === mode;
+        button.classList.toggle("is-active", active);
+        button.setAttribute("aria-selected", active ? "true" : "false");
+      }
+      tabHelp.textContent = {
+        projects: "Grouped by project. Parent conversations and sub-agent runs stay in the same project context.",
+        recent: "Newest parent conversations only. Sub-agent runs are hidden here to keep the main thread list clean.",
+      }[mode];
+      if (shouldRender) renderList();
     }
 
     function setActiveRow() {
-      list.querySelectorAll(".row").forEach((row) => {
+      list.querySelectorAll("[data-file]").forEach((row) => {
         const active = row.dataset.file === activeFile;
         row.classList.toggle("is-active", active);
         if (active) row.setAttribute("aria-current", "page");
@@ -185,13 +224,17 @@
       });
     }
 
-    function selectItem(item) {
+    function openConversation(item) {
       if (!item) return;
       activeFile = item.f;
       setActiveRow();
-      viewer.classList.add("has-frame", "is-loading");
-      statusTitle.textContent = "Loading conversation";
-      statusCopy.textContent = item.t;
+      viewer.classList.add("is-loading");
+      viewerStatusTitle.textContent = "Loading conversation";
+      viewerStatusCopy.textContent = item.t;
+      viewerTitle.textContent = item.t;
+      viewerMeta.textContent = `${item.p} / ${numberFormat.format(item.prompts || 0)} prompts / ${numberFormat.format(item.tools || 0)} tools`;
+      setDownloadLink(viewerMd, item.md);
+      setDownloadLink(viewerJson, item.json);
       if (frame.getAttribute("src") !== item.f) {
         frame.src = item.f;
       } else {
@@ -199,228 +242,205 @@
       }
     }
 
-    function makeRow(item) {
-      const a = document.createElement("a");
-      a.className = "row";
-      a.href = item.f;
-      a.target = "view";
-      a.dataset.file = item.f;
-      if (item.f === activeFile) a.classList.add("is-active");
-      a.addEventListener("click", (event) => {
+    function makePill(text, variant = "") {
+      const pill = document.createElement("span");
+      pill.className = variant ? `pill ${variant}` : "pill";
+      pill.textContent = text;
+      return pill;
+    }
+
+    function makeConversationRow(item) {
+      const row = document.createElement("a");
+      row.className = "conversation-row";
+      row.href = item.f;
+      row.target = "view";
+      row.dataset.file = item.f;
+      row.addEventListener("click", (event) => {
         event.preventDefault();
-        selectItem(item);
+        openConversation(item);
       });
 
-      const title = document.createElement("div");
-      title.className = "row-title";
-      title.textContent = item.t;
+      const top = document.createElement("div");
+      top.className = "row-top";
+      const name = document.createElement("div");
+      name.className = "row-name";
+      name.textContent = item.t;
+      top.append(name);
 
-      const detail = document.createElement("div");
-      detail.className = "row-detail";
-      detail.textContent = detailLabel(item);
+      const copy = document.createElement("div");
+      copy.className = "row-copy";
+      copy.textContent = item.preview || itemDetail(item);
 
-      const project = document.createElement("div");
-      project.className = "row-project";
-      project.textContent = item.p;
+      const pills = document.createElement("div");
+      pills.className = "pill-row";
+      const when = formatDateTime(item.last || item.dt);
+      if (when) pills.append(makePill(when, "time"));
+      pills.append(makePill(`${numberFormat.format(item.prompts || 0)} prompts`, "accent"));
+      if (item.tools) pills.append(makePill(`${numberFormat.format(item.tools)} tools`, "tools"));
+      if (item.sa) pills.append(makePill("sub-agent", "agent"));
 
-      a.append(title, detail, project);
-      return a;
+      row.append(top, copy, pills);
+      return row;
     }
 
     function makeHint(title, copy) {
       const hint = document.createElement("div");
       hint.className = "hint";
-
       const strong = document.createElement("strong");
       strong.textContent = title;
-
-      const text = document.createElement("span");
-      text.textContent = copy;
-
-      hint.append(strong, text);
+      const span = document.createElement("span");
+      span.textContent = copy;
+      hint.append(strong, span);
       return hint;
     }
 
-    function renderSearch(term) {
-      const items = visibleItems();
-      const hits = sortedItems(items).filter((item) => matchesTerm(item, term)).slice(0, MAX_RESULTS);
-      updateStats(hits);
-      list.replaceChildren();
-
-      if (!hits.length) {
-        list.appendChild(makeHint("No matches", "Try a project path, title phrase, or date from the export."));
-        return;
-      }
-
-      const count = document.createElement("div");
-      count.className = "result-summary";
-      count.textContent = `${numberFormat.format(hits.length)} matching conversations`;
-      list.appendChild(count);
-
-      for (const item of hits) list.appendChild(makeRow(item));
-      if (hits.length === MAX_RESULTS) {
-        list.appendChild(makeHint("Result cap reached", `Showing the first ${MAX_RESULTS} matches.`));
-      }
-      setActiveRow();
-    }
-
-    function groupByProject(items) {
+    function groupedByProject(items) {
       const grouped = new Map();
-      for (const item of sortedItems(items)) {
+      for (const item of items) {
         if (!grouped.has(item.p)) grouped.set(item.p, []);
         grouped.get(item.p).push(item);
       }
-      return grouped;
+      return Array.from(grouped.entries()).sort((a, b) => b[1].length - a[1].length || a[0].localeCompare(b[0]));
     }
 
-    function makeProjectButton(project, items) {
-      const button = document.createElement("button");
-      button.type = "button";
-      button.className = "project";
-      button.setAttribute("aria-expanded", "false");
+    function renderProjects(items, fragment) {
+      let rendered = 0;
+      for (const [project, projectItems] of groupedByProject(items)) {
+        const forceOpen = Boolean(query.value.trim());
+        const collapsed = !forceOpen && collapsedProjects.has(project);
+        const group = document.createElement("section");
+        group.className = "project-group";
+        group.classList.toggle("is-collapsed", collapsed);
+        const header = document.createElement("button");
+        header.type = "button";
+        header.className = "project-heading";
+        header.dataset.project = project;
+        header.setAttribute("aria-expanded", collapsed ? "false" : "true");
+        header.addEventListener("click", () => {
+          if (collapsedProjects.has(project)) collapsedProjects.delete(project);
+          else collapsedProjects.add(project);
+          writeSet(STORE_PROJECTS, collapsedProjects);
+          renderList();
+        });
+        const main = document.createElement("span");
+        main.className = "project-main";
+        const caret = document.createElement("span");
+        caret.className = "project-caret";
+        caret.textContent = collapsed ? "+" : "-";
+        const name = document.createElement("strong");
+        name.textContent = project;
+        main.append(caret, name);
+        const meta = document.createElement("span");
+        meta.className = "project-meta";
+        const agents = projectItems.filter((item) => item.sa).length;
+        const parents = projectItems.length - agents;
+        meta.textContent = `${numberFormat.format(parents)} conversations / ${numberFormat.format(agents)} agents`;
+        header.append(main, meta);
+        group.appendChild(header);
 
-      const chevron = document.createElement("span");
-      chevron.className = "project-chevron";
-      chevron.textContent = "›";
-      chevron.setAttribute("aria-hidden", "true");
-
-      const body = document.createElement("span");
-      body.className = "project-body";
-
-      const name = document.createElement("span");
-      name.className = "project-name";
-      name.textContent = project;
-
-      const meta = document.createElement("span");
-      meta.className = "project-meta";
-      meta.textContent = `${dateLabel(items[0])} - ${numberFormat.format(totalMessages(items))} messages`;
-
-      const badge = document.createElement("span");
-      badge.className = "project-count";
-      badge.textContent = numberFormat.format(items.length);
-
-      body.append(name, meta);
-      button.append(chevron, body, badge);
-      return { button, chevron };
+        const children = document.createElement("div");
+        children.className = "project-children";
+        children.hidden = collapsed;
+        if (!collapsed) {
+          for (const item of projectItems) {
+            if (rendered >= MAX_ROWS) break;
+            children.appendChild(makeConversationRow(item));
+            rendered += 1;
+          }
+        }
+        group.appendChild(children);
+        fragment.appendChild(group);
+        if (rendered >= MAX_ROWS) break;
+      }
+      return rendered;
     }
 
-    function renderRows(rows, items) {
-      if (rows.dataset.rendered) return;
-      for (const item of items) rows.appendChild(makeRow(item));
-      rows.dataset.rendered = "1";
-      setActiveRow();
+    function renderFlat(items, fragment) {
+      const rows = items.slice(0, MAX_ROWS);
+      for (const item of rows) fragment.appendChild(makeConversationRow(item));
+      return rows.length;
     }
 
-    function openProject(button, chevron, rows, project, items) {
-      rows.hidden = false;
-      openProjects.add(project);
-      button.setAttribute("aria-expanded", "true");
-      chevron.textContent = "⌄";
-      renderRows(rows, items);
-    }
-
-    function closeProject(button, chevron, rows, project) {
-      rows.hidden = true;
-      openProjects.delete(project);
-      button.setAttribute("aria-expanded", "false");
-      chevron.textContent = "›";
-    }
-
-    function renderProjects() {
-      const items = visibleItems();
-      updateStats(items);
-      list.replaceChildren();
+    function renderList() {
+      renderTimer = 0;
+      const items = currentItems();
+      const fragment = document.createDocumentFragment();
+      let rendered = 0;
 
       if (!items.length) {
-        list.appendChild(makeHint("No conversations", "The current filters hide every exported session."));
-        return;
+        fragment.appendChild(makeHint("No matches", "Try a project path, prompt phrase, tool name, or model."));
+      } else if (mode === "projects") {
+        rendered = renderProjects(items, fragment);
+      } else {
+        rendered = renderFlat(items, fragment);
       }
 
-      const grouped = groupByProject(items);
-      let index = 0;
-      for (const [project, projectItems] of grouped.entries()) {
-        const rows = document.createElement("div");
-        rows.className = "rows";
-        rows.hidden = true;
-
-        const { button, chevron } = makeProjectButton(project, projectItems);
-        button.addEventListener("click", () => {
-          if (rows.hidden) openProject(button, chevron, rows, project, projectItems);
-          else closeProject(button, chevron, rows, project);
-        });
-
-        list.append(button, rows);
-
-        const containsActive = projectItems.some((item) => item.f === activeFile);
-        if (index === 0 || containsActive || openProjects.has(project)) {
-          openProject(button, chevron, rows, project, projectItems);
-        }
-        index += 1;
+      if (items.length > MAX_ROWS) {
+        fragment.appendChild(makeHint("Result cap reached", `Showing ${MAX_ROWS} of ${numberFormat.format(items.length)} matches. Narrow the search for more precise results.`));
       }
+
+      list.replaceChildren(fragment);
       setActiveRow();
     }
 
-    function renderRecent() {
-      const items = visibleItems();
-      const recent = items.slice(0, MAX_RESULTS);
-      updateStats(items);
-      list.replaceChildren();
-
-      if (!recent.length) {
-        list.appendChild(makeHint("No conversations", "The current filters hide every exported session."));
-        return;
-      }
-
-      for (const item of recent) list.appendChild(makeRow(item));
-      if (recent.length === MAX_RESULTS) {
-        list.appendChild(makeHint("Recent cap reached", `Showing the newest ${MAX_RESULTS} conversations.`));
-      }
-      setActiveRow();
-    }
-
-    function renderCurrent() {
-      const term = query.value.trim();
-      updateModeButtons();
-      if (term) renderSearch(term);
-      else if (mode === "recent") renderRecent();
-      else renderProjects();
-    }
-
-    function updateModeButtons() {
-      for (const button of modeButtons) {
-        const active = button.dataset.mode === mode;
-        button.classList.toggle("is-active", active);
-        button.setAttribute("aria-selected", active ? "true" : "false");
-      }
-    }
-
-    function ensureVisibleSelection() {
-      const items = visibleItems();
-      if (!items.length) return;
-      if (!items.some((item) => item.f === activeFile)) selectItem(items[0]);
+    function scheduleRender() {
+      if (renderTimer) window.clearTimeout(renderTimer);
+      renderTimer = window.setTimeout(renderList, 70);
     }
 
     frame.addEventListener("load", () => {
-      viewer.classList.add("has-frame");
       viewer.classList.remove("is-loading");
-      statusTitle.textContent = "Conversation ready";
-      statusCopy.textContent = "Use the sidebar to switch sessions.";
     });
 
-    query.addEventListener("input", renderCurrent);
+    async function downloadLinkedFile(link) {
+      const href = link.getAttribute("href");
+      if (!href || href === "#") return;
+      const name = link.dataset.downloadName || link.getAttribute("download") || fileName(href);
+      if (window.location.protocol !== "file:") {
+        try {
+          const response = await fetch(href);
+          if (!response.ok) throw new Error("Download failed");
+          const blob = await response.blob();
+          const url = URL.createObjectURL(blob);
+          const anchor = document.createElement("a");
+          anchor.href = url;
+          anchor.download = name;
+          document.body.appendChild(anchor);
+          anchor.click();
+          anchor.remove();
+          URL.revokeObjectURL(url);
+          return;
+        } catch {
+          // Fall back to a normal same-origin anchor below.
+        }
+      }
+      const anchor = document.createElement("a");
+      anchor.href = href;
+      anchor.download = name;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+    }
 
-    includeSubagents.addEventListener("change", () => {
-      writeStore(STORE_SUBAGENTS, includeSubagents.checked ? "1" : "0");
-      ensureVisibleSelection();
-      renderCurrent();
+    document.querySelectorAll("[data-download]").forEach((link) => {
+      if (window.location.protocol === "file:") {
+        link.title = "Browsers may open local file:// links instead of downloading. Use claude-history serve for reliable one-click downloads.";
+      }
+      link.addEventListener("click", (event) => {
+        if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+        if (!link.getAttribute("href") || link.getAttribute("href") === "#") {
+          event.preventDefault();
+          return;
+        }
+        event.preventDefault();
+        downloadLinkedFile(link);
+      });
     });
+
+    query.addEventListener("input", scheduleRender);
 
     for (const button of modeButtons) {
-      button.addEventListener("click", () => {
-        mode = button.dataset.mode;
-        writeStore(STORE_MODE, mode);
-        renderCurrent();
-      });
+      button.addEventListener("click", () => setMode(button.dataset.mode));
     }
 
     document.addEventListener("keydown", (event) => {
@@ -432,12 +452,28 @@
       }
       if (event.key === "Escape" && document.activeElement === query && query.value) {
         query.value = "";
-        renderCurrent();
+        renderList();
       }
     });
 
-    renderCurrent();
-    if (visibleItems()[0]) selectItem(visibleItems()[0]);
+    window.addEventListener("message", (event) => {
+      if (!event.data || event.data.type !== "claude-history-open") return;
+      const item = BY_FILE.get(event.data.file);
+      if (!item) return;
+      query.value = "";
+      if (item.sa) {
+        collapsedProjects.delete(item.p);
+        writeSet(STORE_PROJECTS, collapsedProjects);
+        setMode("projects", false);
+      }
+      renderList();
+      openConversation(item);
+    });
+
+    updateSummary();
+    setMode(mode, false);
+    renderList();
+    openConversation(ITEMS.find((item) => !item.sa) || ITEMS[0]);
   </script>
 </body>
 </html>
