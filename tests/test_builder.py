@@ -123,3 +123,74 @@ def test_build_index_metadata_is_newest_first(tmp_path):
     data = read_index_data(index)
     assert [item["t"] for item in data] == ["newer", "older"]
     assert data[0]["s"] > data[1]["s"]
+
+
+def test_incremental_reuse_invalidated_when_options_change(tmp_path):
+    import json as _json
+    source = tmp_path / "source" / "-work-project"
+    source.mkdir(parents=True)
+    output = tmp_path / "out"
+    records = [
+        {"timestamp": "2024-01-01T00:00:00Z", "cwd": "/work/project",
+         "message": {"role": "user", "content": "hi"}},
+        {"timestamp": "2024-01-01T00:00:01Z", "message": {
+            "role": "assistant", "content": [
+                {"type": "thinking", "thinking": "reasoning here", "signature": "s"},
+                {"type": "tool_use", "id": "t1", "name": "Bash", "input": {"command": "ls"}},
+            ]}},
+        {"timestamp": "2024-01-01T00:00:02Z", "message": {"role": "user", "content": [
+            {"type": "tool_result", "tool_use_id": "t1", "content": "ok"}]}},
+    ]
+    (source / "s.jsonl").write_text("\n".join(_json.dumps(r) for r in records), encoding="utf-8")
+
+    # First build with defaults (thinking + tools shown)
+    build([source], output, incremental=True)
+    first = next((output / "conversations").glob("*.html")).read_text(encoding="utf-8")
+    assert "reasoning here" in first and "tool-list" in first
+
+    # Second incremental build with both turned off -> cache MUST invalidate & re-render
+    build([source], output, show_tools=False, show_thinking=False, incremental=True)
+    second = next((output / "conversations").glob("*.html")).read_text(encoding="utf-8")
+    assert "reasoning here" not in second
+    assert "tool-list" not in second
+
+
+def test_build_links_subagent_to_parent_task(tmp_path):
+    import json as _json
+    source = tmp_path / "source" / "-work-project"
+    source.mkdir(parents=True)
+    output = tmp_path / "out"
+
+    parent = [
+        {"timestamp": "2024-01-01T00:00:00Z", "sessionId": "parent",
+         "cwd": "/work/project", "message": {"role": "user", "content": "do it"}},
+        {"timestamp": "2024-01-01T00:00:01Z", "sessionId": "parent",
+         "message": {"role": "assistant", "content": [
+             {"type": "tool_use", "id": "task-1", "name": "Task",
+              "input": {"prompt": "sub work"}}]}},
+    ]
+    child = [
+        {"timestamp": "2024-01-01T00:00:02Z", "sessionId": "child",
+         "isSidechain": True, "sourceToolUseID": "task-1",
+         "message": {"role": "user", "content": "sub work"}},
+        {"timestamp": "2024-01-01T00:00:03Z", "sessionId": "child",
+         "isSidechain": True, "message": {"role": "assistant", "content": "done"}},
+    ]
+    (source / "parent.jsonl").write_text("\n".join(_json.dumps(r) for r in parent), encoding="utf-8")
+    (source / "agent-child.jsonl").write_text("\n".join(_json.dumps(r) for r in child), encoding="utf-8")
+
+    build([source], output, incremental=False)
+
+    parent_json = next(p for p in (output / "conversations").glob("*.json")
+                       if _json.loads(p.read_text())["session_id"] == "parent")
+    data = _json.loads(parent_json.read_text(encoding="utf-8"))
+    link = data["turns"][1]["tool_calls"][0]["child_stem"]
+    assert link  # parent's Task tool_use now points at the child's stem
+    assert data["totals"]["subagents"] == 1
+
+
+def test_cli_parser_has_no_thinking_flag():
+    from claude_history.cli import _build_parser
+    args = _build_parser().parse_args(["--no-thinking"])
+    assert args.no_thinking is True
+    assert _build_parser().parse_args([]).no_thinking is False

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from pathlib import Path
 
@@ -10,6 +11,39 @@ from .builder import build
 from .discovery import discover_sources
 from .opener import open_viewer
 from .server import serve as serve_backup
+
+
+def export_conversation(query: str, fmt: str, output_dir: str,
+                        out_file: str | None = None):
+    base = Path(output_dir) / "conversations"
+    sidecars = sorted(base.glob("*.json"))
+    if not sidecars:
+        raise FileNotFoundError(
+            f"No build found in {output_dir}. Run 'claude-history' first.")
+    needle = query.lower()
+    match = None
+    for sidecar in sidecars:
+        try:
+            data = json.loads(sidecar.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        haystack = f"{data.get('title', '')} {data.get('session_id', '')} {sidecar.stem}".lower()
+        if needle in haystack:
+            match = (sidecar, data)
+            break
+    if match is None:
+        raise FileNotFoundError(f"No conversation matches: {query!r}")
+    sidecar, _data = match
+    if fmt == "json":
+        content = sidecar.read_text(encoding="utf-8")
+    else:
+        md_path = Path(output_dir) / "markdown" / f"{sidecar.stem}.md"
+        content = md_path.read_text(encoding="utf-8")
+    if out_file:
+        Path(out_file).write_text(content, encoding="utf-8")
+        return Path(out_file)
+    print(content)
+    return None
 
 
 def _add_open_flags(parser: argparse.ArgumentParser) -> None:
@@ -39,6 +73,7 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Sort by last activity instead of conversation start.",
     )
     parser.add_argument("--no-tools", action="store_true")
+    parser.add_argument("--no-thinking", action="store_true")
     parser.add_argument("--full-results", action="store_true")
     parser.add_argument("--incremental", action="store_true")
     parser.add_argument("--utc", action="store_true")
@@ -51,6 +86,12 @@ def _build_parser() -> argparse.ArgumentParser:
     serve_parser.add_argument("--host", default="127.0.0.1")
     serve_parser.add_argument("--port", type=int, default=8765)
     _add_open_flags(serve_parser)
+
+    export_parser = subparsers.add_parser("export", help="Export one conversation as md/json.")
+    export_parser.add_argument("query", help="Title, session id, or filename fragment.")
+    export_parser.add_argument("--format", choices=["md", "json"], default="md")
+    export_parser.add_argument("--from", dest="from_dir", default="claude_history_export")
+    export_parser.add_argument("-o", "--output", default=None)
     return parser
 
 
@@ -88,6 +129,7 @@ def _run_build(args: argparse.Namespace) -> int:
             use_utc=args.utc,
             no_subagents=args.no_subagents,
             incremental=args.incremental,
+            show_thinking=not args.no_thinking,
         )
     except Exception as exc:
         print(f"Error: {exc}", file=sys.stderr)
@@ -96,6 +138,17 @@ def _run_build(args: argparse.Namespace) -> int:
     print(f"Built: {index}")
     if args.open_browser and not open_viewer(index):
         print(f"Open manually: {index.resolve()}")
+    return 0
+
+
+def _run_export(args: argparse.Namespace) -> int:
+    try:
+        result = export_conversation(args.query, args.format, args.from_dir, args.output)
+    except Exception as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
+    if result:
+        print(f"Exported: {result}")
     return 0
 
 
@@ -116,6 +169,8 @@ def _run_serve(args: argparse.Namespace) -> int:
 def main(argv: list[str] | None = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
+    if args.command == "export":
+        return _run_export(args)
     if args.command == "serve":
         return _run_serve(args)
     return _run_build(args)

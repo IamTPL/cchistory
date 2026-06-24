@@ -10,7 +10,8 @@ from typing import Any, Iterable
 
 from .html_export import copy_assets, render_conversation_page, render_index_page
 from .markdown_export import conv_to_html, conv_to_markdown
-from .parser import normalize_jsonl, slugify, to_local
+from .model import SCHEMA_VERSION, conversation_to_json
+from .parser import parse_conversation, slugify, to_local
 
 CACHE_FILE = ".claude-history-cache.json"
 OWNED_DIRS = ("conversations", "markdown", "assets")
@@ -40,13 +41,10 @@ def _short_hash(path: Path) -> str:
     return hashlib.sha1(_source_key(path).encode("utf-8", errors="replace")).hexdigest()[:10]
 
 
-def _stem_for(path: Path, conv: dict[str, Any], use_utc: bool) -> str:
-    date = (
-        to_local(conv["created"], use_utc).strftime("%Y-%m-%d")
-        if conv["created"].year > 1
-        else "0000-00-00"
-    )
-    return f"{date}_{slugify(conv['title'])}_{_short_hash(path)}"
+def _stem_for(path: Path, conv, use_utc: bool) -> str:
+    date = (to_local(conv.created, use_utc).strftime("%Y-%m-%d")
+            if conv.created.year > 1 else "0000-00-00")
+    return f"{date}_{slugify(conv.title)}_{_short_hash(path)}"
 
 
 def _load_cache(out: Path) -> dict[str, Any]:
@@ -86,7 +84,11 @@ def _remove_rendered_files(out: Path, entry: dict[str, Any]) -> None:
     stem = entry.get("stem")
     if not stem:
         return
-    for relative in (Path("conversations") / f"{stem}.html", Path("markdown") / f"{stem}.md"):
+    for relative in (
+        Path("conversations") / f"{stem}.html",
+        Path("conversations") / f"{stem}.json",
+        Path("markdown") / f"{stem}.md",
+    ):
         try:
             (out / relative).unlink()
         except FileNotFoundError:
@@ -94,7 +96,8 @@ def _remove_rendered_files(out: Path, entry: dict[str, Any]) -> None:
 
 
 def _remove_unknown_rendered_files(out: Path, live_stems: set[str]) -> None:
-    for folder, suffix in (("conversations", ".html"), ("markdown", ".md")):
+    for folder, suffix in (("conversations", ".html"), ("conversations", ".json"),
+                           ("markdown", ".md")):
         root = out / folder
         if not root.is_dir():
             continue
@@ -106,53 +109,43 @@ def _remove_unknown_rendered_files(out: Path, live_stems: set[str]) -> None:
                     pass
 
 
-def _metadata_from_conv(conv: dict[str, Any], stem: str, count: int, use_utc: bool) -> dict[str, Any]:
-    date = (
-        to_local(conv["created"], use_utc).strftime("%Y-%m-%d")
-        if conv["created"].year > 1
-        else "0000-00-00"
-    )
-    last = (
-        to_local(conv["last"], use_utc).isoformat()
-        if conv["last"].year > 1
-        else ""
-    )
+def _metadata_from_conv(conv, stem: str, count: int, use_utc: bool) -> dict[str, Any]:
+    date = (to_local(conv.created, use_utc).strftime("%Y-%m-%d")
+            if conv.created.year > 1 else "0000-00-00")
+    last = (to_local(conv.last, use_utc).isoformat() if conv.last.year > 1 else "")
     return {
-        "t": conv["title"],
-        "p": conv["project"],
-        "dt": date,
-        "last": last,
-        "n": count,
-        "f": f"conversations/{stem}.html",
+        "t": conv.title, "p": conv.project, "dt": date, "last": last,
+        "n": count, "f": f"conversations/{stem}.html", "sa": bool(conv.subagent),
     }
 
 
-def _render_file(
+def _render_conv(
+    conv,
     source_file: Path,
+    stem: str,
     out: Path,
     show_tools: bool,
     full_results: bool,
     use_utc: bool,
-) -> dict[str, Any] | None:
-    conv = normalize_jsonl(source_file)
-    if not conv["messages"]:
-        return None
-    stem = _stem_for(source_file, conv, use_utc)
-    md_text, count = conv_to_markdown(conv, show_tools, full_results, use_utc)
+    show_thinking: bool,
+) -> dict[str, Any]:
+    md_text, count = conv_to_markdown(conv, show_tools, full_results, use_utc, show_thinking)
     (out / "markdown" / f"{stem}.md").write_text(md_text, encoding="utf-8")
-    page = render_conversation_page(
-        conv["title"],
-        conv_to_html(conv, show_tools, full_results, use_utc),
-    )
-    (out / "conversations" / f"{stem}.html").write_text(page, encoding="utf-8")
+    body = conv_to_html(conv, show_tools, full_results, use_utc, show_thinking, stem)
+    (out / "conversations" / f"{stem}.html").write_text(
+        render_conversation_page(conv.title, body), encoding="utf-8")
+    try:
+        (out / "conversations" / f"{stem}.json").write_text(
+            conversation_to_json(conv, stem), encoding="utf-8")
+    except OSError:
+        pass
     stat = source_file.stat()
     return {
-        "mtime_ns": stat.st_mtime_ns,
-        "size": stat.st_size,
-        "stem": stem,
-        "subagent": bool(conv.get("subagent")),
-        "sort_created": conv["created"].timestamp() if conv["created"].year > 1 else 0,
-        "sort_last": conv["last"].timestamp() if conv["last"].year > 1 else 0,
+        "mtime_ns": stat.st_mtime_ns, "size": stat.st_size, "stem": stem,
+        "subagent": bool(conv.subagent), "session_id": conv.session_id,
+        "source_tool_use_id": conv.source_tool_use_id,
+        "sort_created": conv.created.timestamp() if conv.created.year > 1 else 0,
+        "sort_last": conv.last.timestamp() if conv.last.year > 1 else 0,
         "meta": _metadata_from_conv(conv, stem, count, use_utc),
     }
 
@@ -166,6 +159,7 @@ def build(
     use_utc: bool = False,
     no_subagents: bool = False,
     incremental: bool = False,
+    show_thinking: bool = True,
 ) -> Path:
     """Build the backup tree and return the generated index path."""
     source_paths = _coerce_sources(sources)
@@ -180,32 +174,62 @@ def build(
         _clean_full_rebuild(out)
     _ensure_layout(out)
 
+    current_options = [bool(show_tools), bool(full_results), bool(use_utc),
+                       bool(show_thinking), SCHEMA_VERSION]
     old_cache = _load_cache(out) if incremental else {"files": {}}
-    old_entries: dict[str, Any] = old_cache.get("files", {})
+    old_entries = old_cache.get("files", {}) if old_cache.get("options") == current_options else {}
     new_entries: dict[str, Any] = {}
 
+    # PASS 1: parse all into Conversation objects
+    parsed: list[tuple[Path, Any, str]] = []  # (path, conv, stem)
     for source_file in files:
+        conv = parse_conversation(source_file)
+        if not conv.turns:
+            continue
+        parsed.append((source_file, conv, _stem_for(source_file, conv, use_utc)))
+
+    # Link map: source_tool_use_id -> child stem
+    link_map = {
+        conv.source_tool_use_id: stem
+        for _, conv, stem in parsed
+        if conv.source_tool_use_id
+    }
+    # PASS 1b: attach child_stem to matching parent tool calls
+    for _, conv, _stem in parsed:
+        linked = 0
+        for turn in conv.turns:
+            for tc in turn.tool_calls:
+                child = link_map.get(tc.tool_use_id)
+                if child:
+                    tc.child_stem = child
+                    conv.subagent_links.append({
+                        "tool_use_id": tc.tool_use_id, "child_stem": child})
+                    linked += 1
+        conv.totals.subagents = linked
+
+    # PASS 2: render (with render-level incremental reuse)
+    for source_file, conv, stem in parsed:
         key = _source_key(source_file)
         stat = source_file.stat()
         previous = old_entries.get(key)
         previous_stem = previous.get("stem") if isinstance(previous, dict) else None
         can_reuse = (
-            incremental
-            and isinstance(previous, dict)
+            incremental and isinstance(previous, dict)
             and previous.get("mtime_ns") == stat.st_mtime_ns
             and previous.get("size") == stat.st_size
-            and previous_stem
-            and (out / "markdown" / f"{previous_stem}.md").is_file()
-            and (out / "conversations" / f"{previous_stem}.html").is_file()
+            and previous_stem == stem
+            and not conv.subagent_links  # always re-render parents that link children
+            and (out / "markdown" / f"{stem}.md").is_file()
+            and (out / "conversations" / f"{stem}.html").is_file()
+            and (out / "conversations" / f"{stem}.json").is_file()
         )
         if can_reuse:
             entry = previous
         else:
             if isinstance(previous, dict):
                 _remove_rendered_files(out, previous)
-            entry = _render_file(source_file, out, show_tools, full_results, use_utc)
-        if entry is None:
-            continue
+            entry = _render_conv(conv, source_file, stem, out,
+                                 show_tools, full_results, use_utc, show_thinking)
         new_entries[key] = entry
 
     for key, entry in old_entries.items():
@@ -228,5 +252,5 @@ def build(
     _remove_unknown_rendered_files(out, live_stems)
     (out / "index.html").write_text(render_index_page(meta), encoding="utf-8")
 
-    _write_cache(out, {"files": new_entries})
+    _write_cache(out, {"files": new_entries, "options": current_options})
     return out / "index.html"

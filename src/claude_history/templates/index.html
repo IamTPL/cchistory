@@ -3,45 +3,120 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Claude Backup</title>
+  <title>Claude History</title>
   <link rel="stylesheet" href="assets/style.css">
 </head>
 <body class="index-page">
   <div id="app">
-    <aside id="sidebar">
+    <aside id="sidebar" aria-label="Conversation navigation">
       <header class="sidebar-header">
         <div class="brand">
-          <div class="brand-mark">CB</div>
+          <div class="brand-mark" aria-hidden="true">CH</div>
           <div class="brand-copy">
-            <h1>Claude Backup</h1>
-            <p id="summary"></p>
+            <h1>Claude History</h1>
+            <p id="summary">Preparing export</p>
           </div>
         </div>
+
+        <div class="stat-grid" aria-label="Export summary">
+          <div class="stat">
+            <strong id="conversation-count">0</strong>
+            <span>Conversations</span>
+          </div>
+          <div class="stat">
+            <strong id="project-count">0</strong>
+            <span>Projects</span>
+          </div>
+          <div class="stat">
+            <strong id="message-count">0</strong>
+            <span>Messages</span>
+          </div>
+        </div>
+
         <label class="search-shell">
           <span>Search</span>
           <input id="query" type="search" placeholder="Title or project" autocomplete="off">
         </label>
+
+        <div class="browse-controls">
+          <div class="mode-tabs" role="tablist" aria-label="Browse mode">
+            <button type="button" class="mode-tab" data-mode="projects" role="tab" aria-selected="true">Projects</button>
+            <button type="button" class="mode-tab" data-mode="recent" role="tab" aria-selected="false">Recent</button>
+          </div>
+          <label class="subagent-toggle" id="subagent-toggle">
+            <input id="include-subagents" type="checkbox" checked>
+            <span>Subagents</span>
+          </label>
+        </div>
       </header>
-      <div id="list"></div>
+
+      <div id="list" aria-live="polite"></div>
     </aside>
+
     <main id="viewer">
-      <div class="viewer-empty">
-        <div class="viewer-empty-mark">⌁</div>
-        <p>Select a conversation</p>
+      <div class="viewer-status" id="viewer-status">
+        <div class="viewer-status-mark" aria-hidden="true">CH</div>
+        <p class="viewer-status-title" id="viewer-status-title">Select a conversation</p>
+        <p class="viewer-status-copy" id="viewer-status-copy">Search, browse by project, or open the newest session.</p>
       </div>
-      <iframe name="view" title="Conversation viewer"></iframe>
+      <iframe id="frame" name="view" title="Conversation viewer"></iframe>
     </main>
   </div>
+
   <script>
     const DATA = __DATA__;
     const MAX_RESULTS = 300;
+    const STORE_MODE = "claude-history-mode";
+    const STORE_SUBAGENTS = "claude-history-subagents";
+
     const list = document.getElementById("list");
     const query = document.getElementById("query");
     const summary = document.getElementById("summary");
     const viewer = document.getElementById("viewer");
+    const frame = document.getElementById("frame");
+    const statusTitle = document.getElementById("viewer-status-title");
+    const statusCopy = document.getElementById("viewer-status-copy");
+    const conversationCount = document.getElementById("conversation-count");
+    const projectCount = document.getElementById("project-count");
+    const messageCount = document.getElementById("message-count");
+    const includeSubagents = document.getElementById("include-subagents");
+    const subagentToggle = document.getElementById("subagent-toggle");
+    const modeButtons = Array.from(document.querySelectorAll("[data-mode]"));
 
-    const projects = new Set(DATA.map((item) => item.p));
-    summary.textContent = `${DATA.length} conversations · ${projects.size} projects`;
+    const numberFormat = new Intl.NumberFormat();
+    const dateFormat = new Intl.DateTimeFormat(undefined, {
+      year: "numeric",
+      month: "short",
+      day: "2-digit",
+    });
+    const timeFormat = new Intl.DateTimeFormat(undefined, {
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    });
+
+    let mode = readStore(STORE_MODE, "projects");
+    let activeFile = "";
+    const openProjects = new Set();
+
+    if (!["projects", "recent"].includes(mode)) mode = "projects";
+    includeSubagents.checked = readStore(STORE_SUBAGENTS, "1") !== "0";
+
+    function readStore(key, fallback) {
+      try {
+        return localStorage.getItem(key) || fallback;
+      } catch {
+        return fallback;
+      }
+    }
+
+    function writeStore(key, value) {
+      try {
+        localStorage.setItem(key, value);
+      } catch {
+        return undefined;
+      }
+    }
 
     function sortValue(item) {
       if (typeof item.s === "number") return item.s;
@@ -53,28 +128,152 @@
       return [...items].sort((a, b) => sortValue(b) - sortValue(a));
     }
 
+    const SORTED = sortedItems(DATA);
+    const subagentCount = SORTED.filter((item) => item.sa).length;
+    if (!subagentCount) subagentToggle.hidden = true;
+
+    function visibleItems() {
+      return includeSubagents.checked ? SORTED : SORTED.filter((item) => !item.sa);
+    }
+
+    function projectSet(items) {
+      return new Set(items.map((item) => item.p));
+    }
+
+    function totalMessages(items) {
+      return items.reduce((sum, item) => sum + (Number(item.n) || 0), 0);
+    }
+
+    function updateStats(items) {
+      const projects = projectSet(items);
+      conversationCount.textContent = numberFormat.format(items.length);
+      projectCount.textContent = numberFormat.format(projects.size);
+      messageCount.textContent = numberFormat.format(totalMessages(items));
+      summary.textContent = `${numberFormat.format(items.length)} conversations across ${numberFormat.format(projects.size)} projects`;
+    }
+
+    function dateLabel(item) {
+      const parsed = new Date(item.last || item.dt || "");
+      if (!Number.isNaN(parsed.valueOf())) return dateFormat.format(parsed);
+      return item.dt || "Unknown date";
+    }
+
+    function timeLabel(item) {
+      if (!item.last) return "";
+      const parsed = new Date(item.last);
+      return Number.isNaN(parsed.valueOf()) ? "" : timeFormat.format(parsed);
+    }
+
+    function detailLabel(item) {
+      const suffix = item.sa ? " - subagent" : "";
+      const time = timeLabel(item);
+      const when = time ? `${dateLabel(item)} ${time}` : dateLabel(item);
+      return `${when} - ${numberFormat.format(item.n)} messages${suffix}`;
+    }
+
+    function matchesTerm(item, term) {
+      const needle = term.toLowerCase();
+      return item.t.toLowerCase().includes(needle) || item.p.toLowerCase().includes(needle);
+    }
+
+    function setActiveRow() {
+      list.querySelectorAll(".row").forEach((row) => {
+        const active = row.dataset.file === activeFile;
+        row.classList.toggle("is-active", active);
+        if (active) row.setAttribute("aria-current", "page");
+        else row.removeAttribute("aria-current");
+      });
+    }
+
+    function selectItem(item) {
+      if (!item) return;
+      activeFile = item.f;
+      setActiveRow();
+      viewer.classList.add("has-frame", "is-loading");
+      statusTitle.textContent = "Loading conversation";
+      statusCopy.textContent = item.t;
+      if (frame.getAttribute("src") !== item.f) {
+        frame.src = item.f;
+      } else {
+        viewer.classList.remove("is-loading");
+      }
+    }
+
     function makeRow(item) {
       const a = document.createElement("a");
       a.className = "row";
       a.href = item.f;
       a.target = "view";
-      a.addEventListener("click", () => {
-        viewer.classList.add("has-frame");
+      a.dataset.file = item.f;
+      if (item.f === activeFile) a.classList.add("is-active");
+      a.addEventListener("click", (event) => {
+        event.preventDefault();
+        selectItem(item);
       });
 
       const title = document.createElement("div");
       title.className = "row-title";
       title.textContent = item.t;
-      a.appendChild(title);
 
       const detail = document.createElement("div");
       detail.className = "row-detail";
-      detail.textContent = `${item.dt} - ${item.n} messages`;
-      a.appendChild(detail);
+      detail.textContent = detailLabel(item);
+
+      const project = document.createElement("div");
+      project.className = "row-project";
+      project.textContent = item.p;
+
+      a.append(title, detail, project);
       return a;
     }
 
-    function makeProjectButton(project, count) {
+    function makeHint(title, copy) {
+      const hint = document.createElement("div");
+      hint.className = "hint";
+
+      const strong = document.createElement("strong");
+      strong.textContent = title;
+
+      const text = document.createElement("span");
+      text.textContent = copy;
+
+      hint.append(strong, text);
+      return hint;
+    }
+
+    function renderSearch(term) {
+      const items = visibleItems();
+      const hits = sortedItems(items).filter((item) => matchesTerm(item, term)).slice(0, MAX_RESULTS);
+      updateStats(hits);
+      list.replaceChildren();
+
+      if (!hits.length) {
+        list.appendChild(makeHint("No matches", "Try a project path, title phrase, or date from the export."));
+        return;
+      }
+
+      const count = document.createElement("div");
+      count.className = "result-summary";
+      count.textContent = `${numberFormat.format(hits.length)} matching conversations`;
+      list.appendChild(count);
+
+      for (const item of hits) list.appendChild(makeRow(item));
+      if (hits.length === MAX_RESULTS) {
+        list.appendChild(makeHint("Result cap reached", `Showing the first ${MAX_RESULTS} matches.`));
+      }
+      setActiveRow();
+    }
+
+    function groupByProject(items) {
+      const grouped = new Map();
+      for (const item of sortedItems(items)) {
+        if (!grouped.has(item.p)) grouped.set(item.p, []);
+        grouped.get(item.p).push(item);
+      }
+      return grouped;
+    }
+
+    function makeProjectButton(project, items) {
       const button = document.createElement("button");
       button.type = "button";
       button.className = "project";
@@ -82,78 +281,163 @@
 
       const chevron = document.createElement("span");
       chevron.className = "project-chevron";
-      chevron.textContent = "▸";
+      chevron.textContent = "›";
+      chevron.setAttribute("aria-hidden", "true");
+
+      const body = document.createElement("span");
+      body.className = "project-body";
 
       const name = document.createElement("span");
       name.className = "project-name";
       name.textContent = project;
 
+      const meta = document.createElement("span");
+      meta.className = "project-meta";
+      meta.textContent = `${dateLabel(items[0])} - ${numberFormat.format(totalMessages(items))} messages`;
+
       const badge = document.createElement("span");
       badge.className = "project-count";
-      badge.textContent = count;
+      badge.textContent = numberFormat.format(items.length);
 
-      button.append(chevron, name, badge);
+      body.append(name, meta);
+      button.append(chevron, body, badge);
       return { button, chevron };
     }
 
-    function renderSearch(term) {
-      const needle = term.toLowerCase();
-      const hits = sortedItems(DATA)
-        .filter((item) => item.t.toLowerCase().includes(needle) || item.p.toLowerCase().includes(needle))
-        .slice(0, MAX_RESULTS);
-      list.replaceChildren();
-      if (!hits.length) {
-        const empty = document.createElement("div");
-        empty.className = "hint";
-        empty.textContent = "No results";
-        list.appendChild(empty);
-        return;
-      }
-      for (const item of hits) list.appendChild(makeRow(item));
-      if (hits.length === MAX_RESULTS) {
-        const capped = document.createElement("div");
-        capped.className = "hint small";
-        capped.textContent = `Showing first ${MAX_RESULTS} results`;
-        list.appendChild(capped);
-      }
+    function renderRows(rows, items) {
+      if (rows.dataset.rendered) return;
+      for (const item of items) rows.appendChild(makeRow(item));
+      rows.dataset.rendered = "1";
+      setActiveRow();
+    }
+
+    function openProject(button, chevron, rows, project, items) {
+      rows.hidden = false;
+      openProjects.add(project);
+      button.setAttribute("aria-expanded", "true");
+      chevron.textContent = "⌄";
+      renderRows(rows, items);
+    }
+
+    function closeProject(button, chevron, rows, project) {
+      rows.hidden = true;
+      openProjects.delete(project);
+      button.setAttribute("aria-expanded", "false");
+      chevron.textContent = "›";
     }
 
     function renderProjects() {
+      const items = visibleItems();
+      updateStats(items);
       list.replaceChildren();
-      const grouped = new Map();
-      for (const item of sortedItems(DATA)) {
-        if (!grouped.has(item.p)) grouped.set(item.p, []);
-        grouped.get(item.p).push(item);
+
+      if (!items.length) {
+        list.appendChild(makeHint("No conversations", "The current filters hide every exported session."));
+        return;
       }
 
-      [...grouped.keys()].forEach((project) => {
+      const grouped = groupByProject(items);
+      let index = 0;
+      for (const [project, projectItems] of grouped.entries()) {
         const rows = document.createElement("div");
         rows.className = "rows";
         rows.hidden = true;
 
-        const { button, chevron } = makeProjectButton(project, grouped.get(project).length);
+        const { button, chevron } = makeProjectButton(project, projectItems);
         button.addEventListener("click", () => {
-          const open = rows.hidden;
-          rows.hidden = !open;
-          chevron.textContent = open ? "▾" : "▸";
-          button.setAttribute("aria-expanded", open ? "true" : "false");
-          if (open && !rows.dataset.rendered) {
-            for (const item of grouped.get(project)) rows.appendChild(makeRow(item));
-            rows.dataset.rendered = "1";
-          }
+          if (rows.hidden) openProject(button, chevron, rows, project, projectItems);
+          else closeProject(button, chevron, rows, project);
         });
 
-        list.appendChild(button);
-        list.appendChild(rows);
+        list.append(button, rows);
+
+        const containsActive = projectItems.some((item) => item.f === activeFile);
+        if (index === 0 || containsActive || openProjects.has(project)) {
+          openProject(button, chevron, rows, project, projectItems);
+        }
+        index += 1;
+      }
+      setActiveRow();
+    }
+
+    function renderRecent() {
+      const items = visibleItems();
+      const recent = items.slice(0, MAX_RESULTS);
+      updateStats(items);
+      list.replaceChildren();
+
+      if (!recent.length) {
+        list.appendChild(makeHint("No conversations", "The current filters hide every exported session."));
+        return;
+      }
+
+      for (const item of recent) list.appendChild(makeRow(item));
+      if (recent.length === MAX_RESULTS) {
+        list.appendChild(makeHint("Recent cap reached", `Showing the newest ${MAX_RESULTS} conversations.`));
+      }
+      setActiveRow();
+    }
+
+    function renderCurrent() {
+      const term = query.value.trim();
+      updateModeButtons();
+      if (term) renderSearch(term);
+      else if (mode === "recent") renderRecent();
+      else renderProjects();
+    }
+
+    function updateModeButtons() {
+      for (const button of modeButtons) {
+        const active = button.dataset.mode === mode;
+        button.classList.toggle("is-active", active);
+        button.setAttribute("aria-selected", active ? "true" : "false");
+      }
+    }
+
+    function ensureVisibleSelection() {
+      const items = visibleItems();
+      if (!items.length) return;
+      if (!items.some((item) => item.f === activeFile)) selectItem(items[0]);
+    }
+
+    frame.addEventListener("load", () => {
+      viewer.classList.add("has-frame");
+      viewer.classList.remove("is-loading");
+      statusTitle.textContent = "Conversation ready";
+      statusCopy.textContent = "Use the sidebar to switch sessions.";
+    });
+
+    query.addEventListener("input", renderCurrent);
+
+    includeSubagents.addEventListener("change", () => {
+      writeStore(STORE_SUBAGENTS, includeSubagents.checked ? "1" : "0");
+      ensureVisibleSelection();
+      renderCurrent();
+    });
+
+    for (const button of modeButtons) {
+      button.addEventListener("click", () => {
+        mode = button.dataset.mode;
+        writeStore(STORE_MODE, mode);
+        renderCurrent();
       });
     }
 
-    query.addEventListener("input", () => {
-      const term = query.value.trim();
-      if (term) renderSearch(term);
-      else renderProjects();
+    document.addEventListener("keydown", (event) => {
+      const wantsSearch = (event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k";
+      if (wantsSearch) {
+        event.preventDefault();
+        query.focus();
+        query.select();
+      }
+      if (event.key === "Escape" && document.activeElement === query && query.value) {
+        query.value = "";
+        renderCurrent();
+      }
     });
-    renderProjects();
+
+    renderCurrent();
+    if (visibleItems()[0]) selectItem(visibleItems()[0]);
   </script>
 </body>
 </html>

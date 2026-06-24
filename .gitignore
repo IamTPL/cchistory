@@ -7,3 +7,8 @@ dist/
 /claude_history_export/
 /claude_backup/
 tmp
+.agents
+.claude
+skills-lock.json
+superpowers
+ui-proposal
