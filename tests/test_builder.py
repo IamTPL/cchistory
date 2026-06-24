@@ -75,6 +75,8 @@ def test_build_full_rebuild_removes_owned_orphans_but_keeps_user_files(tmp_path)
     assert len(list((output / "conversations").glob("*.html"))) == 1
     assert len(list((output / "markdown").glob("*.md"))) == 1
     assert (output / "assets" / "style.css").exists()
+    assert (output / "assets" / "fonts" / "Geist-Variable.woff2").exists()
+    assert (output / "assets" / "fonts" / "GeistMono-Variable.woff2").exists()
 
     (output / "conversations" / "orphan.html").write_text("old", encoding="utf-8")
     (output / "markdown" / "orphan.md").write_text("old", encoding="utf-8")

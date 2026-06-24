@@ -31,6 +31,16 @@ def render_index_page(meta: list[dict[str, Any]], manifest: dict[str, Any] | Non
 
 def copy_assets(output_assets: Path) -> None:
     output_assets.mkdir(parents=True, exist_ok=True)
-    source = resources.files("claude_history").joinpath("assets/style.css")
-    with resources.as_file(source) as asset_path:
-        shutil.copyfile(asset_path, output_assets / "style.css")
+    source = resources.files("claude_history").joinpath("assets")
+
+    def copy_tree(resource, destination: Path) -> None:
+        destination.mkdir(parents=True, exist_ok=True)
+        for child in resource.iterdir():
+            target = destination / child.name
+            if child.is_dir():
+                copy_tree(child, target)
+            else:
+                with resources.as_file(child) as asset_path:
+                    shutil.copyfile(asset_path, target)
+
+    copy_tree(source, output_assets)

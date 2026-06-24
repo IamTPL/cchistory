@@ -36,4 +36,4 @@ package-dir = {"" = "src"}
 where = ["src"]
 
 [tool.setuptools.package-data]
-claude_history = ["templates/*.html", "assets/*.css"]
+claude_history = ["templates/*.html", "assets/*.css", "assets/fonts/*"]
