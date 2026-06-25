@@ -1,47 +1,79 @@
-# Claude Code History
+<div align="center">
 
-`claude-history` is a Python CLI for exporting and browsing Claude Code
-conversation history offline.
+# 📜 Claude Code History
 
-It reads Claude Code `.jsonl` history files, creates a clean local export, and
-generates a modern static viewer for searching and reviewing past sessions.
+**Export and browse your Claude Code conversation history — fully offline.**
 
-## What It Produces
+`claude-history` reads Claude Code's raw `.jsonl` session files, turns them into a
+clean local archive, and generates a modern static viewer for searching and
+reviewing past sessions.
 
-- `markdown/*.md`: one Markdown file per conversation.
-- `conversations/*.html`: one pre-rendered HTML page per conversation.
-- `index.html`: an offline viewer grouped by project.
-- `assets/style.css`: local CSS, no CDN required.
+[![Python](https://img.shields.io/badge/Python-3.9%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
+[![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20WSL%20%7C%20Linux%20%7C%20macOS-4c8bf5)](#-source-discovery)
+[![Offline](https://img.shields.io/badge/Offline-No%20CDN%20required-2ea44f)](#-what-it-produces)
 
-The viewer is built for large histories: conversation pages are pre-rendered,
-the index embeds only metadata, project groups render lazily, and sidebar
-sorting is newest-first.
+</div>
 
-## Features
+---
 
-- Cross-platform support: Windows, WSL, Ubuntu, and macOS.
-- Automatic Claude Code source discovery.
-- Clean rebuild by default to avoid stale/orphaned output.
-- Optional incremental rebuilds for large histories.
-- Project grouping from the recorded `cwd` field, with folder-name fallback.
-- Modern 30/70 sidebar/content layout.
-- Distinct styling for user prompts, commands, and Claude responses.
-- Safe Markdown table rendering with overflow handling.
-- Local `serve` command for a more robust browser experience than `file://`.
+## ✨ Why this exists
 
-## Naming
+Every Claude Code session is quietly saved on your machine as a raw `.jsonl`
+file. Those files are hard to read, scattered across platforms, and offer no way
+to search, review, or get statistics. `claude-history` bridges that gap with
+three guiding principles:
 
-- Python distribution: `claude-code-history`
-- Python package: `claude_history`
-- CLI command: `claude-history`
-- Default output directory: `claude_history_export/`
+| Principle | What it means |
+| :-- | :-- |
+| 🔒 **Private & offline** | Reads local files, writes local HTML/Markdown. No CDN, no telemetry, no required server — your conversations never leave your machine. |
+| 👀 **Human-readable** | Raw JSONL becomes a clean web archive, grouped by project, with prompts, slash commands, and Claude's replies clearly distinguished. |
+| 📈 **Built for scale** | Years of history stay fast: conversation pages are pre-rendered, the index embeds only metadata, project groups render lazily, and incremental rebuilds skip unchanged sessions. |
 
-The source package intentionally does not share a name with the generated output
-directory, so `.gitignore` can ignore exports without hiding source files.
+---
 
-## Installation
+## 📦 Table of Contents
 
-### Recommended: pipx
+- [What It Produces](#-what-it-produces)
+- [Installation](#-installation)
+- [Quick Start](#-quick-start)
+- [CLI Reference](#-cli-reference)
+- [Serve Mode](#-serve-mode)
+- [Export a Single Conversation](#-export-a-single-conversation)
+- [Source Discovery](#-source-discovery)
+- [Output Layout](#-output-layout)
+- [What Gets Exported](#-what-gets-exported)
+- [Development](#-development)
+- [Notes](#-notes)
+- [License](#-license)
+
+---
+
+## 🗂️ What It Produces
+
+| Output | Description |
+| :-- | :-- |
+| `index.html` | Offline viewer grouped by project, with search and statistics. |
+| `conversations/*.html` | One pre-rendered HTML page per conversation. |
+| `conversations/*.json` | Normalized machine-readable copy of each conversation. |
+| `markdown/*.md` | One clean Markdown file per conversation. |
+| `manifest.json` | Aggregated stats: per-project totals, activity heatmap, top tools/models, and the sub-agent graph. |
+| `assets/style.css` | Local CSS — no CDN required. |
+
+> [!NOTE]
+> The viewer is designed for large histories. Conversation pages are
+> pre-rendered, the index embeds only metadata, project groups render lazily,
+> and the sidebar is sorted newest-first.
+
+---
+
+## 🚀 Installation
+
+> [!TIP]
+> `pipx` is the recommended way to install on **any** platform — it isolates the
+> tool in its own environment and puts `claude-history` on your `PATH`. Plain
+> `pip` works too if you prefer.
+
+### 🐧 Linux / Ubuntu / WSL / macOS
 
 ```bash
 pipx install .
@@ -55,9 +87,18 @@ pipx ensurepath
 
 Then restart the terminal.
 
-### Windows
+> If you don't have `pipx`, install it first with
+> `python3 -m pip install --user pipx`, or just use `python3 -m pip install .`.
+
+### 🪟 Windows
 
 From PowerShell or CMD:
+
+```powershell
+pipx install .
+```
+
+Or, without `pipx`:
 
 ```powershell
 python -m pip install .
@@ -71,13 +112,17 @@ locations include:
 <venv>\Scripts
 ```
 
-### Development Install
+### 🧑‍💻 Development install (all platforms)
+
+Installs the package in editable mode together with the test dependencies:
 
 ```bash
 python -m pip install -e ".[dev]"
 ```
 
-## Quick Start
+---
+
+## ⚡ Quick Start
 
 Build the default export into `./claude_history_export` and open the viewer:
 
@@ -85,131 +130,146 @@ Build the default export into `./claude_history_export` and open the viewer:
 claude-history
 ```
 
-Build without opening a browser:
+| Goal | Command |
+| :-- | :-- |
+| Build without opening a browser | `claude-history --no-open` |
+| Use a specific projects directory | `claude-history --source <path> -o <output-dir>` |
+| Merge all discovered sources | `claude-history --all-sources` |
+| Re-render only what changed | `claude-history --incremental` |
 
-```bash
-claude-history --no-open
-```
+> [!TIP]
+> Run `claude-history -h` at any time to see the full help.
 
-Use an explicit Claude Code `projects` directory:
+---
 
-```bash
-claude-history --source <path-to-.claude/projects> -o <output-dir>
-```
-
-Merge all discovered sources:
-
-```bash
-claude-history --all-sources
-```
-
-## CLI Options
+## 🛠️ CLI Reference
 
 ```bash
 claude-history [options]
 ```
 
-Common options:
+| Option | Description |
+| :-- | :-- |
+| `--source <path>` | Use a specific Claude Code `projects` directory. Can be passed more than once. |
+| `--all-sources` | Use every discovered source instead of only the first one. |
+| `-o, --output <path>` | Output directory. Defaults to `./claude_history_export`. |
+| `--by-activity` | Sort by last activity instead of conversation start time. |
+| `--no-tools` | Hide tool-call details in the export. |
+| `--no-thinking` | Hide Claude's thinking blocks in the export. |
+| `--full-results` | Keep full tool results instead of compact previews. |
+| `--incremental` | Re-render only changed conversations when possible. |
+| `--utc` | Render timestamps in UTC instead of local time. |
+| `--no-subagents` | Exclude sidechain / sub-agent sessions from the index. |
+| `--open` / `--no-open` | Open the viewer after build. Enabled by default. |
 
-- `--source <path>`: Use a specific Claude Code `projects` directory. Can be passed more than once.
-- `--all-sources`: Use every discovered source instead of only the first one.
-- `-o, --output <path>`: Output directory. Defaults to `./claude_history_export`.
-- `--by-activity`: Sort by last activity instead of conversation start time.
-- `--no-tools`: Hide tool call details in the export.
-- `--full-results`: Keep full tool results instead of compact previews.
-- `--incremental`: Re-render only changed conversations when possible.
-- `--utc`: Render timestamps in UTC instead of local time.
-- `--no-subagents`: Exclude sidechain/sub-agent sessions from the index.
-- `--open`: Open the viewer after build. Enabled by default.
-- `--no-open`: Do not open the viewer after build.
+---
 
-Show the full help:
+## 🌐 Serve Mode
 
-```bash
-claude-history -h
-```
-
-## Serve Mode
-
-The default viewer works directly from `index.html` using `file://`.
-
-For very large exports, or if your browser behaves poorly with local files, use
-the local server:
+The viewer works directly from `index.html` over `file://`. For very large
+exports, or if your browser is finicky with local files, run the bundled local
+server instead:
 
 ```bash
 claude-history serve
 ```
 
-Options:
+| Option | Default | Description |
+| :-- | :-- | :-- |
+| `-o, --output <path>` | `claude_history_export` | Directory to serve. |
+| `--host <host>` | `127.0.0.1` | Bind address. |
+| `--port <port>` | `8765` | Bind port. |
+| `--open` / `--no-open` | open | Open the browser after starting. |
+
+> [!NOTE]
+> **Trade-off:** `file://` is the simplest option and works offline with no
+> server. `serve` is more stable for large exports and browser-security edge
+> cases.
+
+---
+
+## 📤 Export a Single Conversation
+
+Pull one conversation out of an existing build as Markdown or JSON — handy for
+sharing or piping into other tools:
 
 ```bash
-claude-history serve -o <output-dir>
-claude-history serve --host 127.0.0.1 --port 8000
-claude-history serve --no-open
+# Print the best match for a title / session-id / filename fragment
+claude-history export "jwt configuration"
+
+# As JSON, written to a file
+claude-history export "jwt configuration" --format json -o jwt.json
+
+# Read from a non-default build directory
+claude-history export "jwt configuration" --from <output-dir>
 ```
 
-Trade-off:
+| Argument / Option | Description |
+| :-- | :-- |
+| `query` | Title, session id, or filename fragment to match. |
+| `--format {md,json}` | Output format. Defaults to `md`. |
+| `--from <dir>` | Build directory to read from. Defaults to `claude_history_export`. |
+| `-o <file>` | Write to a file instead of printing to stdout. |
 
-- `file://` is the simplest option and works offline with no server.
-- `serve` is more stable for large exports and browser security edge cases.
+---
 
-## Source Discovery
+## 🔍 Source Discovery
 
 When `--source` is not provided, `claude-history` looks for Claude Code project
 history directories in this order:
 
 1. `CLAUDE_CONFIG_DIR/projects`, if `CLAUDE_CONFIG_DIR` is set.
 2. `~/.claude/projects`.
-3. On WSL: `/mnt/c/Users/*/.claude/projects`.
-4. On Windows: WSL home directories through `\\wsl$` and `\\wsl.localhost`.
+3. **On WSL:** `/mnt/c/Users/*/.claude/projects`.
+4. **On Windows:** WSL home directories through `\\wsl$` and `\\wsl.localhost`.
 
 If multiple sources are found, the first one is used by default and the CLI
 prints the discovered list. Use `--all-sources` to merge them, or `--source` to
 choose explicitly.
 
-## Output Layout
+---
 
-Default output:
+## 📁 Output Layout
 
 ```text
 claude_history_export/
-  conversations/
-    *.html
-  markdown/
-    *.md
-  assets/
-    style.css
-  index.html
-  .claude-history-cache.json
+├── conversations/
+│   ├── *.html                  # pre-rendered conversation pages
+│   └── *.json                  # normalized conversation data
+├── markdown/
+│   └── *.md                    # one Markdown file per conversation
+├── assets/
+│   └── style.css               # local, offline-friendly CSS
+├── index.html                  # offline viewer
+├── manifest.json               # aggregated stats + sub-agent graph
+└── .claude-history-cache.json  # incremental-rebuild cache
 ```
 
-On a full rebuild, the tool only owns and replaces:
+On a full rebuild, the tool **only owns and replaces** `conversations/`,
+`markdown/`, `assets/`, `index.html`, `manifest.json`, and
+`.claude-history-cache.json`. Any other files you place in the output directory
+are preserved.
 
-- `conversations/`
-- `markdown/`
-- `assets/`
-- `index.html`
-- `.claude-history-cache.json`
+> [!IMPORTANT]
+> Generated output should normally not be committed. The default
+> `claude_history_export/` directory is ignored by `.gitignore`.
 
-Other files you place in the output directory are preserved.
+---
 
-Generated output should normally not be committed. The default
-`claude_history_export/` directory is ignored by `.gitignore`.
-
-## What Gets Exported
+## 📥 What Gets Exported
 
 `claude-history` exports Claude Code history from `.jsonl` files under Claude
-Code's `projects` directory.
+Code's `projects` directory — and nothing else.
 
-It does not export unrelated chat sessions from other tools or products. For
-example, a current Codex/OpenAI chat is not stored in Claude Code's
-`.claude/projects` directory, so it cannot appear in this export.
+- It does **not** export chat sessions from other tools or products. A
+  Codex/OpenAI chat, for example, is not stored in `.claude/projects`, so it
+  cannot appear here.
+- If an **active** session does not show up yet, finish or close it and rebuild.
+  The `.jsonl` file may not be fully flushed until the session ends.
 
-If a Claude Code session is currently active and does not show up yet, close or
-finish that session and rebuild. The `.jsonl` file may not be fully flushed
-until the session ends.
+---
 
-## Development
+## 🧑‍💻 Development
 
 Install development dependencies:
 
@@ -217,7 +277,7 @@ Install development dependencies:
 python -m pip install -e ".[dev]"
 ```
 
-Run tests:
+Run the test suite:
 
 ```bash
 python -m pytest
@@ -229,10 +289,33 @@ Build a wheel without dependencies:
 python -m pip wheel --no-deps -w dist .
 ```
 
-## Notes
+### Naming conventions
+
+| Item | Value |
+| :-- | :-- |
+| Python distribution | `claude-code-history` |
+| Python package | `claude_history` |
+| CLI command | `claude-history` |
+| Default output directory | `claude_history_export/` |
+
+> The source package intentionally does not share a name with the generated
+> output directory, so `.gitignore` can ignore exports without hiding source
+> files.
+
+---
+
+## 📝 Notes
 
 - All file I/O uses UTF-8 with replacement for malformed input.
 - Broken `.jsonl` lines are skipped instead of crashing the build.
 - Output filenames are slugged to avoid Windows-forbidden characters.
 - HTML assets are local and offline-friendly.
 
+---
+
+## 📄 License
+
+No license file is currently included. Add a `LICENSE` file (and a `license`
+field in `pyproject.toml`) to declare usage terms.
+
+<div align="center"><sub>Built for everyone who wants to keep — and actually read — their Claude Code history.</sub></div>

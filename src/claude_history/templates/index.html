@@ -161,6 +161,16 @@
       return (path || "").split("/").pop() || "";
     }
 
+    function projectDisplay(project, items = []) {
+      const normalized = String(project || "").replace(/\\/g, "/").replace(/\/+$/, "");
+      const index = normalized.lastIndexOf("/");
+      const base = (items.find((item) => item.pb) || {}).pb || (
+        index >= 0 ? normalized.slice(index + 1) : normalized
+      ) || "Unknown";
+      const parent = index > 0 ? normalized.slice(0, index) : "";
+      return { base, parent };
+    }
+
     function setDownloadLink(link, href) {
       link.href = href || "#";
       if (href) {
@@ -332,9 +342,21 @@
         const caret = document.createElement("span");
         caret.className = "project-caret";
         caret.textContent = collapsed ? "+" : "-";
+        const display = projectDisplay(project, projectItems);
+        const title = document.createElement("span");
+        title.className = "project-title";
+        title.title = project;
         const name = document.createElement("strong");
-        name.textContent = project;
-        main.append(caret, name);
+        name.className = "project-name";
+        name.textContent = display.base;
+        title.append(name);
+        if (display.parent) {
+          const path = document.createElement("span");
+          path.className = "project-path";
+          path.textContent = display.parent;
+          title.append(path);
+        }
+        main.append(caret, title);
         const meta = document.createElement("span");
         meta.className = "project-meta";
         const agents = projectItems.filter((item) => item.sa).length;
