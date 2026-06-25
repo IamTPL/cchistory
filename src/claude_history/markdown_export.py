@@ -275,7 +275,7 @@ def conv_to_html(
         parts.append(f"<span>{created} ({tz})</span>")
     parts.append(f"<span>{conv.totals.messages} messages</span>")
     parts.append("</div>")
-    parts.append(_stats_bar(conv))
+    parts.append(_stats_strip(conv))
     parts.append(_resume_panel(conv, stem))
     parts.extend(["</header>", '<div class="conversation-body">', '<div class="message-list">'])
 
@@ -293,16 +293,23 @@ def conv_to_html(
     return "\n".join(parts)
 
 
-def _stats_bar(conv) -> str:
+def _stats_strip(conv) -> str:
     tot = conv.totals
-    items = [
-        ("tokens in", tot.input_tokens), ("out", tot.output_tokens), ("cache", tot.cache_tokens),
-        ("turns", tot.messages), ("tools", tot.tool_calls),
-        ("thinking", tot.thinking_blocks), ("sub-agents", tot.subagents),
+    secondary = [
+        ("out", tot.output_tokens, True),
+        ("cache", tot.cache_tokens, True),
+        ("turns", tot.messages, True),
+        ("tools", tot.tool_calls, True),
+        ("thinking", tot.thinking_blocks, False),
+        ("sub-agents", tot.subagents, False),
     ]
-    cells = "".join(
-        f'<span class="stat"><strong>{_format_int(value)}</strong>{html.escape(name)}</span>'
-        for name, value in items
+    cells = [
+        f'<span class="stat-primary"><strong>{_format_int(tot.input_tokens)}</strong> in</span>'
+    ]
+    cells.extend(
+        f"<span>{_format_int(value)} {html.escape(name)}</span>"
+        for name, value, always in secondary
+        if always or value
     )
     extra: list[str] = []
     if conv.git_branch:
@@ -311,8 +318,9 @@ def _stats_bar(conv) -> str:
         extra.append("v" + html.escape(conv.version))
     if tot.models:
         extra.append(html.escape(", ".join(tot.models)))
-    tail = f'<div class="stats-extra">{" · ".join(extra)}</div>' if extra else ""
-    return f'<div class="stats-bar">{cells}</div>{tail}'
+    if extra:
+        cells.append(f'<span class="stats-extra">{" · ".join(extra)}</span>')
+    return f'<div class="stats-strip">{"".join(cells)}</div>'
 
 
 def _resume_panel(conv, stem: str) -> str:

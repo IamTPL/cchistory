@@ -267,6 +267,11 @@
       name.textContent = item.t;
       top.append(name);
 
+      const project = document.createElement("div");
+      project.className = "row-project";
+      project.textContent = item.pb || item.p || "Unknown";
+      project.title = item.p || project.textContent;
+
       const copy = document.createElement("div");
       copy.className = "row-copy";
       copy.textContent = item.preview || itemDetail(item);
@@ -279,7 +284,7 @@
       if (item.tools) pills.append(makePill(`${numberFormat.format(item.tools)} tools`, "tools"));
       if (item.sa) pills.append(makePill("sub-agent", "agent"));
 
-      row.append(top, copy, pills);
+      row.append(top, project, copy, pills);
       return row;
     }
 

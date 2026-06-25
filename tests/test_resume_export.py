@@ -6,7 +6,7 @@ from claude_history.markdown_export import conv_to_html
 from claude_history.model import Conversation, Totals, Turn
 
 
-def test_conv_to_html_has_stats_bar_and_resume_command():
+def test_conv_to_html_has_compact_stats_and_resume_command():
     dt = datetime(2024, 1, 1, tzinfo=timezone.utc)
     conv = Conversation(
         title="T", project="/work/proj", cwd="/work/proj", session_id="1c30f636",
@@ -21,11 +21,12 @@ def test_conv_to_html_has_stats_bar_and_resume_command():
         ),
     )
     out = conv_to_html(conv, show_tools=True, full_results=False, stem="2024-01-01_t_abc")
-    assert "stats-bar" in out
-    assert "<strong>14,948</strong>tokens in" in out
-    assert "<strong>178,334</strong>out" in out
-    assert "<strong>20,914,688</strong>cache" in out
-    assert "<strong>182</strong>turns" in out
+    assert "stats-strip" in out
+    assert "stats-bar" not in out
+    assert '<span class="stat-primary"><strong>14,948</strong> in</span>' in out
+    assert "<span>178,334 out</span>" in out
+    assert "<span>20,914,688 cache</span>" in out
+    assert "<span>182 turns</span>" in out
     assert "data-continue-open" in out
     assert "continue-dialog" in out
     assert "cd /work/proj &amp;&amp; claude --resume 1c30f636" in out

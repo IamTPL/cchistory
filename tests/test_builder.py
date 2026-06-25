@@ -163,6 +163,24 @@ def test_build_index_metadata_contains_capped_deep_search_text(tmp_path):
     assert len(data[0]["q"]) <= 16_000
 
 
+def test_build_index_metadata_includes_project_basename_for_recent_rows(tmp_path):
+    source = tmp_path / "source"
+    output = tmp_path / "out"
+    write_jsonl_at(
+        source / "-home-tplong-WorkSpace-att_ocr_backend" / "one.jsonl",
+        "hello",
+        "2024-01-01T00:00:00Z",
+        cwd="/home/tplong/WorkSpace/att_ocr_backend",
+    )
+
+    index = build([source], output, incremental=False)
+
+    data = read_index_data(index)
+    assert data[0]["p"] == "/home/tplong/WorkSpace/att_ocr_backend"
+    assert data[0]["pb"] == "att_ocr_backend"
+    assert "row-project" in index.read_text(encoding="utf-8")
+
+
 def test_index_metadata_includes_capped_deep_search_text(tmp_path):
     source = tmp_path / "source" / "-work-project"
     source.mkdir(parents=True)

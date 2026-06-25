@@ -119,6 +119,13 @@ def _preview(text: str, max_chars: int = 142) -> str:
     return text[:max_chars].rstrip() + "..."
 
 
+def _project_basename(project: str) -> str:
+    normalized = str(project or "").replace("\\", "/").rstrip("/")
+    if not normalized:
+        return "Unknown"
+    return normalized.rsplit("/", 1)[-1] or normalized
+
+
 def _search_index(conv, max_chars: int = SEARCH_INDEX_LIMIT) -> str:
     """Return capped text for client-side search without embedding full JSON."""
     parts = [conv.title, conv.project, conv.cwd, conv.git_branch or "", conv.version or ""]
@@ -172,7 +179,8 @@ def _metadata_from_conv(conv, stem: str, count: int, use_utc: bool) -> dict[str,
     commands = [turn for turn in conv.turns if turn.kind == "command"]
     total_tokens = conv.totals.input_tokens + conv.totals.output_tokens + conv.totals.cache_tokens
     return {
-        "t": conv.title, "p": conv.project, "dt": date, "last": last,
+        "t": conv.title, "p": conv.project, "pb": _project_basename(conv.project),
+        "dt": date, "last": last,
         "n": count, "f": f"conversations/{stem}.html", "sa": bool(conv.subagent),
         "stem": stem,
         "json": f"conversations/{stem}.json",
