@@ -60,6 +60,8 @@ use [serve mode](#serve-mode).
 `pipx` is recommended because it isolates the tool in its own environment and
 puts `claude-history` on your `PATH`. These alternatives also work.
 
+> On Windows, use `python` wherever these commands say `python3`.
+
 ### Plain pip
 
 ```bash
