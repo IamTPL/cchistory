@@ -7,7 +7,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from typing import Any
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 
 @dataclass
@@ -31,7 +31,7 @@ class ToolCall:
 
 @dataclass
 class Turn:
-    kind: str  # "human" | "assistant" | "command"
+    kind: str  # "human" | "assistant" | "command" | "system"
     time: datetime
     text: str = ""
     command: str | None = None

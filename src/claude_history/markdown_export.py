@@ -11,7 +11,7 @@ import markdown as markdown_lib
 
 from .parser import to_local, truncate
 
-LABEL = {"human": "You", "assistant": "Claude", "command": "Command"}
+LABEL = {"human": "You", "assistant": "Claude", "command": "Command", "system": "System"}
 
 
 def _format_int(value: int) -> str:
@@ -365,6 +365,6 @@ def _resume_panel(conv, stem: str) -> str:
 
 def reclass(kind: str) -> str:
     """Return a small safe CSS suffix for a message kind."""
-    if kind in {"human", "assistant", "command"}:
+    if kind in {"human", "assistant", "command", "system"}:
         return kind
     return "generic"

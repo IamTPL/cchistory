@@ -211,3 +211,197 @@ def test_parse_conversation_uses_ai_title_and_metadata(tmp_path):
     assert conv.totals.output_tokens == 4
     assert conv.totals.models == ["claude-opus-4-8"]
     assert conv.totals.duration_seconds == 5.0
+
+
+def _user(ts: str, content, **fields) -> dict:
+    return {"type": "user", "timestamp": ts, "isSidechain": False,
+            "message": {"role": "user", "content": content}, **fields}
+
+
+def _assistant(ts: str, text: str) -> dict:
+    return {"type": "assistant", "timestamp": ts,
+            "message": {"role": "assistant", "content": [{"type": "text", "text": text}]}}
+
+
+HUMAN = {"origin": {"kind": "human"}, "promptSource": "sdk", "turnOrigin": "human"}
+SMOKE_TEST_NOTIFICATION = (
+    "<task-notification>\n"
+    "<task-id>bfs8d6k42</task-id>\n"
+    "<tool-use-id>toolu_01MdjEfqWQv5Nde7KVzDgUXs</tool-use-id>\n"
+    "<output-file>/tmp/claude/tasks/bfs8d6k42.output</output-file>\n"
+    "<status>completed</status>\n"
+    '<summary>Background command "Run full smoke test in the background" completed (exit code 0)</summary>\n'
+    "</task-notification>"
+)
+
+
+def test_background_task_notification_is_a_system_event_not_a_prompt(tmp_path):
+    path = tmp_path / "-work-project" / "session.jsonl"
+    write_jsonl(path, [
+        _user("2026-09-23T04:38:17Z", [{"type": "text", "text": "Is the whole WBS scope covered?"}], **HUMAN),
+        _assistant("2026-09-23T04:42:00Z", "The smoke test is running in the background."),
+        _user("2026-09-23T04:43:29Z", SMOKE_TEST_NOTIFICATION,
+              origin={"kind": "task-notification"}, promptSource="system",
+              turnOrigin="task_notification", queueSkipAttachments=True),
+    ])
+
+    conv = parse_conversation(path)
+
+    assert [t.text for t in conv.turns if t.kind == "human"] == ["Is the whole WBS scope covered?"]
+    assert [t.text for t in conv.turns if t.kind == "system"] == [
+        'Background command "Run full smoke test in the background" completed (exit code 0)'
+    ]
+
+
+def test_task_notification_without_origin_metadata_is_detected_from_content(tmp_path):
+    path = tmp_path / "-work-project" / "session.jsonl"
+    write_jsonl(path, [
+        _user("2024-01-01T00:00:00Z", "real prompt"),
+        _user("2024-01-01T00:00:05Z", SMOKE_TEST_NOTIFICATION),
+    ])
+
+    conv = parse_conversation(path)
+
+    assert [(t.kind, t.text) for t in conv.turns] == [
+        ("human", "real prompt"),
+        ("system", 'Background command "Run full smoke test in the background" completed (exit code 0)'),
+    ]
+
+
+def test_meta_task_notification_joins_every_summary_and_drops_the_preamble(tmp_path):
+    path = tmp_path / "-work-project" / "agent-a55e.jsonl"
+    content = (
+        "[SYSTEM NOTIFICATION - NOT USER INPUT]\n"
+        "This is an automated background-task event, NOT a message from the user.\n\n"
+        "<task-notification>\n<task-id>bk2pfmo6d</task-id>\n"
+        '<summary>Monitor event: "wait for subagents"</summary>\n<event>checkpoint4</event>\n'
+        "</task-notification>\n\n"
+        "<task-notification>\n<task-id>bk2pfmo6d</task-id>\n<status>completed</status>\n"
+        '<summary>Monitor "wait for subagents" stream ended</summary>\n'
+        "</task-notification>"
+    )
+    write_jsonl(path, [
+        _user("2024-01-01T00:00:00Z", "sub-agent task brief"),
+        _user("2024-01-01T00:00:05Z", content, isMeta=True, origin={"kind": "task-notification"}),
+    ])
+
+    conv = parse_conversation(path)
+
+    assert [(t.kind, t.text) for t in conv.turns] == [
+        ("human", "sub-agent task brief"),
+        ("system", 'Monitor event: "wait for subagents"\nMonitor "wait for subagents" stream ended'),
+    ]
+
+
+def test_meta_companion_records_are_hidden(tmp_path):
+    path = tmp_path / "-work-project" / "session.jsonl"
+    write_jsonl(path, [
+        _user("2024-01-01T00:00:00Z", [
+            {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "iVBO"}},
+            {"type": "text", "text": "Why is the Sales sidebar shorter?"},
+        ], imagePasteIds=[8], **HUMAN),
+        _user("2024-01-01T00:00:00Z", [
+            {"type": "text", "text": "[Image: source: /tmp/claude/images/8.png, original 2412x1519]"},
+        ], isMeta=True, turnCompanion=True),
+        _user("2024-01-01T00:00:03Z",
+              "[Image: original 2432x1400, displayed at 2000x1151. "
+              "Multiply coordinates by 1.22 to map to original image.]",
+              isMeta=True, turnCompanion=True),
+        _user("2024-01-01T00:00:04Z",
+              "<command-message>workflow-authoring</command-message>\n"
+              "<command-name>workflow-authoring</command-name>\n"
+              "<skill-format>true</skill-format>",
+              isMeta=True, turnCompanion=True),
+        _user("2024-01-01T00:00:04Z", "Continue from where you left off.", isMeta=True),
+        _assistant("2024-01-01T00:00:09Z", "Because v2 dropped two menu groups."),
+    ])
+
+    conv = parse_conversation(path)
+
+    assert [(t.kind, t.text, t.command) for t in conv.turns] == [
+        ("human", "Why is the Sales sidebar shorter?", None),
+        ("assistant", "Because v2 dropped two menu groups.", None),
+    ]
+
+
+def test_sub_agent_hand_back_is_a_system_event_even_though_it_is_meta(tmp_path):
+    path = tmp_path / "-work-project" / "session.jsonl"
+    body = ("[Subagent hand-back] The text below is the final report of a subagent. The report follows:\n"
+            "  **Yes: e-signature is in Phase 1.**")
+    write_jsonl(path, [
+        _user("2024-01-01T00:00:00Z", "Is e-signature in scope?", **HUMAN),
+        _user("2024-01-01T00:00:30Z",
+              f'Another Claude session sent a message:\n<agent-message from="a6c3df08">\n{body}\n</agent-message>',
+              isMeta=True, promptSource="system", turnOrigin="peer",
+              origin={"kind": "peer", "from": "a6c3df08", "senderTaskId": "a6c3df08", "body": body}),
+    ])
+
+    conv = parse_conversation(path)
+
+    assert [t.text for t in conv.turns if t.kind == "human"] == ["Is e-signature in scope?"]
+    system = [t for t in conv.turns if t.kind == "system"]
+    assert len(system) == 1
+    assert "**Yes: e-signature is in Phase 1.**" in system[0].text
+
+
+def test_interrupt_marker_and_compact_summary_are_system_events(tmp_path):
+    path = tmp_path / "-work-project" / "session.jsonl"
+    write_jsonl(path, [
+        _user("2024-01-01T00:00:00Z",
+              "This session is being continued from a previous conversation that ran out of context.",
+              isCompactSummary=True, isVisibleInTranscriptOnly=True),
+        _user("2024-01-01T00:00:05Z", "keep going", **HUMAN),
+        _user("2024-01-01T00:00:09Z", [{"type": "text", "text": "[Request interrupted by user for tool use]"}]),
+    ])
+
+    conv = parse_conversation(path)
+
+    assert [(t.kind, t.text) for t in conv.turns] == [
+        ("system", "This session is being continued from a previous conversation that ran out of context."),
+        ("human", "keep going"),
+        ("system", "[Request interrupted by user for tool use]"),
+    ]
+    assert conv.title == "keep going"
+
+
+def test_title_falls_back_to_first_command_when_there_is_no_prompt(tmp_path):
+    path = tmp_path / "-work-project" / "09916ea3.jsonl"
+    write_jsonl(path, [
+        _user("2024-01-01T00:00:00Z",
+              "<command-message>superpowers:using-superpowers</command-message>\n"
+              "<command-name>/superpowers:using-superpowers</command-name>",
+              origin={"kind": "human"}),
+        _user("2024-01-01T00:00:00Z",
+              "<command-message>superpowers:brainstorming</command-message>\n"
+              "<command-name>/superpowers:brainstorming</command-name>\n"
+              "<command-args>Analyse the report</command-args>",
+              origin={"kind": "human"}),
+        _user("2024-01-01T00:00:00Z", "Base directory for this skill: /skills/brainstorming\n\n# Brainstorming",
+              isMeta=True, turnCompanion=True),
+        _assistant("2024-01-01T00:00:04Z", "Reading the spreadsheet."),
+        _user("2024-01-01T00:00:09Z", [{"type": "text", "text": "[Request interrupted by user for tool use]"}]),
+    ])
+
+    conv = parse_conversation(path)
+
+    assert conv.title == "/superpowers:brainstorming Analyse the report"
+
+
+def test_meta_brief_that_opens_a_sub_agent_conversation_stays_its_prompt(tmp_path):
+    path = tmp_path / "-work-project" / "agent-a7d19229.jsonl"
+    brief = "`minimal prompt`\n\nYou are reviewing a pull request for real bugs."
+    write_jsonl(path, [
+        _user("2024-01-01T00:00:00Z", brief, isSidechain=True, isMeta=True,
+              uuid="u1", parentUuid=None),
+        {**_assistant("2024-01-01T00:00:04Z", "Getting the diff."), "uuid": "a1", "parentUuid": "u1"},
+        _user("2024-01-01T00:00:05Z", "<system-reminder>Report via SubagentHandback.</system-reminder>",
+              isSidechain=True, isMeta=True, uuid="u2", parentUuid="a1"),
+    ])
+
+    conv = parse_conversation(path)
+
+    assert [(t.kind, t.text) for t in conv.turns] == [
+        ("human", brief),
+        ("assistant", "Getting the diff."),
+    ]
+    assert conv.title == "`minimal prompt`"

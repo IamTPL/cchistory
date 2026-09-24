@@ -957,6 +957,16 @@ html.has-open-modal body {
   max-width: 780px;
 }
 
+.message-system {
+  max-width: 780px;
+  border-style: dashed;
+  background: var(--muted-soft);
+}
+
+.message-system .message-role {
+  color: var(--text-3);
+}
+
 .message-head {
   display: flex;
   flex-wrap: wrap;

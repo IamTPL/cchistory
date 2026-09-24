@@ -21,6 +21,7 @@ NOISE_TAGS = (
     "system-reminder",
     "command-message",
 )
+INTERRUPT_PREFIX = "[Request interrupted by user"
 
 
 def decode_project(folder_name: str, cwd: str) -> str:
@@ -133,6 +134,36 @@ def clean_user_text(s: Any) -> tuple[str, str | None]:
     return s, command
 
 
+def user_record_kind(rec: dict[str, Any], text: str) -> str | None:
+    """Return "human" for typed prompts, "system" for harness events, None to hide.
+
+    Claude Code also stores task notifications, sub-agent hand-backs, compaction
+    summaries, interrupt markers and hidden ``isMeta`` companions as user messages.
+    """
+    origin = rec.get("origin")
+    if isinstance(origin, dict):
+        origin = origin.get("kind")
+    if origin == "human":
+        return "human"
+    if origin or rec.get("isCompactSummary"):
+        return "system"
+    if rec.get("isMeta"):
+        # Some sub-agent briefs are meta too; the record that opens a thread is its prompt.
+        opens_thread = "parentUuid" in rec and rec["parentUuid"] is None
+        return "human" if opens_thread else None
+    if text.lstrip().startswith(("<task-notification>", INTERRUPT_PREFIX)):
+        return "system"
+    return "human"
+
+
+def system_event_text(text: str) -> str:
+    if "<task-notification>" in text:
+        summaries = [s.strip() for s in re.findall(r"<summary>(.*?)</summary>", text, re.S)]
+        if any(summaries):
+            return "\n".join(s for s in summaries if s)
+    return clean_user_text(text)[0]
+
+
 def _parse_usage(raw: Any) -> Usage | None:
     if not isinstance(raw, dict):
         return None
@@ -203,13 +234,20 @@ def build_turns(
         raw = "\n".join(p for p in text_parts if p).strip()
 
         if role in ("user", "human"):
-            text, command = clean_user_text(raw)
-            if command:
-                turns.append(Turn(kind="command", time=ts, command=command,
-                                  uuid=uuid, parent_uuid=parent_uuid))
-            if text:
-                turns.append(Turn(kind="human", time=ts, text=text,
-                                  uuid=uuid, parent_uuid=parent_uuid))
+            kind = user_record_kind(rec, raw)
+            if kind == "system":
+                text = system_event_text(raw)
+                if text:
+                    turns.append(Turn(kind="system", time=ts, text=text,
+                                      uuid=uuid, parent_uuid=parent_uuid))
+            elif kind == "human":
+                text, command = clean_user_text(raw)
+                if command:
+                    turns.append(Turn(kind="command", time=ts, command=command,
+                                      uuid=uuid, parent_uuid=parent_uuid))
+                if text:
+                    turns.append(Turn(kind="human", time=ts, text=text,
+                                      uuid=uuid, parent_uuid=parent_uuid))
         elif role in ("assistant", "model"):
             if raw or tool_calls or thinking_parts:
                 turns.append(Turn(kind="assistant", time=ts, text=raw,
@@ -269,7 +307,9 @@ def pick_title(records: list[dict[str, Any]], turns: list[Turn]) -> str:
     for turn in turns:
         if turn.kind == "human" and turn.text:
             return turn.text.splitlines()[0][:60]
-    return ""
+    commands = [turn.command for turn in turns if turn.kind == "command" and turn.command]
+    command = next((c for c in commands if " " in c), commands[0] if commands else "")
+    return command.splitlines()[0][:60] if command else ""
 
 
 def compute_totals(turns: list[Turn]) -> Totals:

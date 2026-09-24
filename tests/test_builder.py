@@ -292,3 +292,58 @@ def test_cli_parser_has_no_thinking_flag():
     args = _build_parser().parse_args(["--no-thinking"])
     assert args.no_thinking is True
     assert _build_parser().parse_args([]).no_thinking is False
+
+
+def _write_prompt_then_task_notification(path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    records = [
+        {"type": "user", "timestamp": "2026-09-23T04:38:17Z", "cwd": "/work/project",
+         "origin": {"kind": "human"}, "promptSource": "sdk",
+         "message": {"role": "user", "content": [{"type": "text", "text": "Is the whole WBS scope covered?"}]}},
+        {"type": "assistant", "timestamp": "2026-09-23T04:42:00Z",
+         "message": {"role": "assistant", "content": [{"type": "text", "text": "Smoke test running."}]}},
+        {"type": "user", "timestamp": "2026-09-23T04:43:29Z",
+         "origin": {"kind": "task-notification"}, "promptSource": "system",
+         "turnOrigin": "task_notification",
+         "message": {"role": "user", "content": (
+             "<task-notification>\n<task-id>bfs8d6k42</task-id>\n<status>completed</status>\n"
+             '<summary>Background command "Run full smoke test" completed (exit code 0)</summary>\n'
+             "</task-notification>")}},
+    ]
+    path.write_text("\n".join(json.dumps(r, ensure_ascii=False) for r in records) + "\n", encoding="utf-8")
+
+
+def test_build_prompt_map_and_prompt_count_ignore_task_notifications(tmp_path):
+    source = tmp_path / "source"
+    output = tmp_path / "out"
+    _write_prompt_then_task_notification(source / "-work-project" / "s.jsonl")
+
+    index = build([source], output, incremental=False)
+
+    data = read_index_data(index)
+    assert data[0]["prompts"] == 1
+    assert data[0]["preview"] == "Is the whole WBS scope covered?"
+    page = next((output / "conversations").glob("*.html")).read_text(encoding="utf-8")
+    assert re.findall(r'data-prompt-title="([^"]*)"', page) == ["Is the whole WBS scope covered?"]
+    assert page.count('class="prompt-item"') == 1
+    system = re.search(r'<section class="message message-system"[^>]*>(.*?)</section>', page, re.S)
+    assert system
+    assert '<span class="message-role">System</span>' in system.group(1)
+    assert "Run full smoke test" in system.group(1)
+
+
+def test_incremental_build_does_not_reuse_pages_cached_before_the_prompt_fix(tmp_path):
+    source = tmp_path / "source"
+    output = tmp_path / "out"
+    _write_prompt_then_task_notification(source / "-work-project" / "s.jsonl")
+    build([source], output, incremental=True)
+    page = next((output / "conversations").glob("*.html"))
+    page.write_text("stale page that listed the notification as a prompt", encoding="utf-8")
+    cache_path = output / ".claude-history-cache.json"
+    cache = json.loads(cache_path.read_text(encoding="utf-8"))
+    cache["options"] = [True, False, False, True, 1, 3]  # what the previous release wrote
+    cache_path.write_text(json.dumps(cache), encoding="utf-8")
+
+    build([source], output, incremental=True)
+
+    assert "stale page" not in page.read_text(encoding="utf-8")
